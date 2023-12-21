@@ -197,7 +197,6 @@ if __name__ == "__main__":
     training_acc_ga[sub_test] = res.algorithm.callback.data["train_acc"][-1]
     p_value_ga[sub_test] = res.algorithm.callback.data["p_value"][-1]
     testing_acc_ga[sub_test] = res.algorithm.callback.data["test_acc"][-1]
-    rsqrd_best = res.algorithm.callback.data["rsquare"][-1]
     predict_best = res.algorithm.callback.data["predict"][-1]
 
     print('Training Acc after GA: ', training_acc_ga[sub_test])
