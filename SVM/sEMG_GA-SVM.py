@@ -42,6 +42,7 @@ if __name__ == "__main__":
   VFI_1            = DATA_ALL['SUBJECT_VFI']       # VFI-1 Score
   SUBJECT_ID       = DATA_ALL['SUBJECT_ID']        # Sujbect ID
   SUBJECT_SKINFOLD = DATA_ALL['SUBJECT_SKINFOLD']  # Subject Skinfold Thickness
+  del DATA_ALL    # it's no longer used so just to save some memory
 
   leftout = 1
 
@@ -83,13 +84,14 @@ if __name__ == "__main__":
               "permutation"     : args.perm,
               "threads"         : args.thread}
 
-    run = wandb.init(project  = project_name,
-                     group    = GROUP,
-                     config   = config,
-                     name     = sub_txt,
-                     tags     = [sub_group],  # for convenience later to visualize results grouped by `healthy` or `fatigued`
-                     settings = wandb.Settings(_disable_stats=True, _disable_meta=True),
-                     reinit   = True)
+    if WANDB:
+      run = wandb.init(project  = project_name,
+                      group    = GROUP,
+                      config   = config,
+                      name     = sub_txt,
+                      tags     = [sub_group],  # for convenience later to visualize results grouped by `healthy` or `fatigued`
+                      settings = wandb.Settings(_disable_stats=True, _disable_meta=True),
+                      reinit   = True)
 
     print('\n===No.%d: %s===\n'%(sub_test+1, sub_txt)) 
     print('VFI-1:', (VFI_1[sub_test][0][0]))
@@ -159,17 +161,18 @@ if __name__ == "__main__":
     print('Testing  Acc: ', accuracy_score(label_predict, Y_Test))
     testing_acc[sub_test] = accuracy_score(label_predict, Y_Test)
 
-    wandb.log({"subject_info/vfi_1"  : int(VFI_1[sub_test][0][0])})
-    wandb.log({"metrics/train_acc" : training_acc[sub_test],
-               "metrics/test_acc"  : testing_acc[sub_test],
-               "metrics/p_value"   : p_value[sub_test]})
+    if WANDB:
+      wandb.log({"subject_info/vfi_1" : int(VFI_1[sub_test][0][0]),
+                 "metrics/train_acc"  : training_acc[sub_test],
+                 "metrics/test_acc"   : testing_acc[sub_test],
+                 "metrics/p_value"    : p_value[sub_test]})
 
     print('Genetic Algorithm Optimization...')
 
-    num_permu       = wandb.config["permutation"]
-    num_generation  = wandb.config["num_generation"]
-    population_size = wandb.config["population_size"]
-    threads_count   = wandb.config["threads"]
+    num_permu       = config["permutation"]
+    num_generation  = config["num_generation"]
+    population_size = config["population_size"]
+    threads_count   = config["threads"]
 
     n_threads = threads_count
     pool = ThreadPool(n_threads)
@@ -189,7 +192,7 @@ if __name__ == "__main__":
     res = minimize(problem,
                    algorithm,
                    ("n_gen", num_generation),
-                   callback = MyCallback(log_flag=1),
+                   callback = MyCallback(),
                    verbose=False)
 
     print('Threads:', res.exec_time)
@@ -206,11 +209,12 @@ if __name__ == "__main__":
     print('Testing  Acc after GA /u/', np.sum(predict_best[V_Test==2]==Y_Test[V_Test==2])/np.sum(V_Test==2))
     print('Testing  Acc after GA /i/', np.sum(predict_best[V_Test==3]==Y_Test[V_Test==3])/np.sum(V_Test==3))
 
-    wandb.log({"metrics/train_acc_ga" : training_acc_ga[sub_test],
-               "metrics/test_acc_ga"  : testing_acc_ga[sub_test],
-               "metrics/test_acc_/a/" : np.sum(predict_best[V_Test==1]==Y_Test[V_Test==1])/np.sum(V_Test==1),
-               "metrics/test_acc_/u/" : np.sum(predict_best[V_Test==2]==Y_Test[V_Test==2])/np.sum(V_Test==2),
-               "metrics/test_acc_/i/" : np.sum(predict_best[V_Test==3]==Y_Test[V_Test==3])/np.sum(V_Test==3),
-               "metrics/p_value_ga"   : p_value_ga[sub_test]})
+    if WANDB:
+      wandb.log({"metrics/train_acc_ga" : training_acc_ga[sub_test],
+                 "metrics/test_acc_ga"  : testing_acc_ga[sub_test],
+                 "metrics/test_acc_/a/" : np.sum(predict_best[V_Test==1]==Y_Test[V_Test==1])/np.sum(V_Test==1),
+                 "metrics/test_acc_/u/" : np.sum(predict_best[V_Test==2]==Y_Test[V_Test==2])/np.sum(V_Test==2),
+                 "metrics/test_acc_/i/" : np.sum(predict_best[V_Test==3]==Y_Test[V_Test==3])/np.sum(V_Test==3),
+                 "metrics/p_value_ga"   : p_value_ga[sub_test]})
 
     run.finish()

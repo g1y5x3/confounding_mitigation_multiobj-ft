@@ -1,8 +1,11 @@
+import os
 import wandb
 import numpy as np
 from pymoo.core.callback import Callback
 from pymoo.core.problem import ElementwiseProblem
 from mlconfound.stats import partial_confound_test
+
+WANDB = os.getenv("WANDB", False)
 
 class MyProblem(ElementwiseProblem):
 
@@ -61,13 +64,12 @@ class MyProblem(ElementwiseProblem):
 # therefore we evaluate each solution and report the ones the gives
 # the best testing accuracy
 class MyCallback(Callback):
-  def __init__(self, log_flag) -> None:
+  def __init__(self) -> None:
     super().__init__()
     self.data["train_acc"] = []
     self.data["test_acc"] = []
     self.data["p_value"] = []
     self.data["predict"] = []
-    self.log_flag = log_flag
 
   def notify(self, algorithm):
     F = algorithm.pop.get("F")
@@ -118,7 +120,7 @@ class MyCallback(Callback):
         te_acc_best  = temp_te_acc
         predict_best = algorithm.problem.clf.predict(x_test_tf)
 
-    if self.log_flag:
+    if WANDB:
       wandb.log({"GA/n_gen"     : algorithm.n_gen,
                  "GA/train_acc" : tr_acc_best,
                  "GA/p_value"   : p_value_best,
