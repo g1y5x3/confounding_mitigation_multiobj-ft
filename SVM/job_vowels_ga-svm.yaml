@@ -8,10 +8,10 @@ spec:
     spec:
       containers:
         - name: cpu-container
-          image: gitlab-registry.nrp-nautilus.io/yg5d6/testcpu
+          image: gitlab-registry.nrp-nautilus.io/yg5d6/cptdeeplearning:semg
           command: ["/bin/bash", "-c"]
-          # args: ["cd home; git clone https://github.com/g1y5x3/Confounding_Mitigation_EC.git; cd Confounding_Mitigation_EC; mv ../subjects_* data/; python3 sEMG-Vowels_GA-SVM-RBF.py -s 39 -nsub 1 -group Vowels-GA-SVM"]
-          args: ["cd home; git clone https://github.com/g1y5x3/Confounding_Mitigation_EC.git; cd Confounding_Mitigation_EC; mv ../subjects_* data/; python3 sEMG-Vowels-Single_GA-SVM-RBF.py -s 39 -nsub 1 -group Vowels-/a+u/_GA-SVM_n-gen-8 -vowel 4 -ngen 8 -perm 1000 -pop 128 -thread 16"]
+          args: ["cd home; git clone https://github.com/g1y5x3/Confounding_Mitigation_EC.git; cd Confounding_Mitigation_EC; mv ../subjects_* data/; python3 sEMG-Vowels_GA-SVM-RBF.py -s 39 -nsub 1 -group Vowels-GA-SVM"]
+          - cd home;k
           resources:
             limits:
               memory: "16G"

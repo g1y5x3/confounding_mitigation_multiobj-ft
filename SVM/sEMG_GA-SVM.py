@@ -25,10 +25,10 @@ from pymoo.util.display.multi import MultiObjectiveOutput
 from fitness import MyProblem, MyCallback
 
 # Just to eliminate the warnings
-# def warn(*args, **kwargs):
-  # pass
-# import warnings
-# warnings.warn = warn
+def warn(*args, **kwargs):
+  pass
+import warnings
+warnings.warn = warn
 
 WANDB = os.getenv("WANDB", False)
 GROUP = os.getenv("GROUP", "tests")
@@ -216,5 +216,4 @@ if __name__ == "__main__":
                  "metrics/test_acc_/u/" : np.sum(predict_best[V_Test==2]==Y_Test[V_Test==2])/np.sum(V_Test==2),
                  "metrics/test_acc_/i/" : np.sum(predict_best[V_Test==3]==Y_Test[V_Test==3])/np.sum(V_Test==3),
                  "metrics/p_value_ga"   : p_value_ga[sub_test]})
-
-    run.finish()
+      run.finish()

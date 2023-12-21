@@ -120,6 +120,11 @@ class MyCallback(Callback):
         te_acc_best  = temp_te_acc
         predict_best = algorithm.problem.clf.predict(x_test_tf)
 
+    # Give an update at the end of generation
+    print(f"n_gen:     {algorithm.n_gen}")
+    print(f"train_acc: {tr_acc_best}")
+    print(f"p_value:   {p_value_best}")
+    print(f"test_acc:  {te_acc_best}")
     if WANDB:
       wandb.log({"GA/n_gen"     : algorithm.n_gen,
                  "GA/train_acc" : tr_acc_best,
