@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: semg-vowel-a-u-job-39
+  name: svm-semg-0
 spec:
   ttlSecondsAfterFinished: 100
   template:
@@ -10,8 +10,12 @@ spec:
         - name: cpu-container
           image: gitlab-registry.nrp-nautilus.io/yg5d6/cptdeeplearning:semg
           command: ["/bin/bash", "-c"]
-          args: ["cd home; git clone https://github.com/g1y5x3/Confounding_Mitigation_EC.git; cd Confounding_Mitigation_EC; mv ../subjects_* data/; python3 sEMG-Vowels_GA-SVM-RBF.py -s 39 -nsub 1 -group Vowels-GA-SVM"]
-          - cd home;k
+          args:
+          - wandb login ddd37dd14701ecdeaff9bf3bbb1f84fab4cc2a00;
+            git clone https://github.com/g1y5x3/confounding_mitigation.git;
+            cd confounding_mitigation;
+            mv ../data .;
+            WANDB=1 GROUP=SVM python3 SVM/sEMG_GA-SVM.py -s 0 -nsub 1 -ngen 4 -pop 128 -perm 1000 -thread 16;
           resources:
             limits:
               memory: "16G"
