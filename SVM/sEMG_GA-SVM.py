@@ -167,7 +167,7 @@ if __name__ == "__main__":
                  "metrics/test_acc"   : testing_acc[sub_test],
                  "metrics/p_value"    : p_value[sub_test]})
 
-    print('Genetic Algorithm Optimization...')
+    print("Genetic Algorithm Optimization...")
 
     num_permu       = config["permutation"]
     num_generation  = config["num_generation"]
@@ -202,18 +202,18 @@ if __name__ == "__main__":
     testing_acc_ga[sub_test] = res.algorithm.callback.data["test_acc"][-1]
     predict_best = res.algorithm.callback.data["predict"][-1]
 
-    print('Training Acc after GA: ', training_acc_ga[sub_test])
-    print('P Value      after GA: ', p_value_ga[sub_test])
-    print('Testing  Acc after GA: ', testing_acc_ga[sub_test])
-    print('Testing  Acc after GA /a/', np.sum(predict_best[V_Test==1]==Y_Test[V_Test==1])/np.sum(V_Test==1))
-    print('Testing  Acc after GA /u/', np.sum(predict_best[V_Test==2]==Y_Test[V_Test==2])/np.sum(V_Test==2))
-    print('Testing  Acc after GA /i/', np.sum(predict_best[V_Test==3]==Y_Test[V_Test==3])/np.sum(V_Test==3))
+    print("Training Acc after GA: ", training_acc_ga[sub_test])
+    print("P Value      after GA: ", p_value_ga[sub_test])
+    print("Testing  Acc after GA: ", testing_acc_ga[sub_test])
+    print("Testing  Acc after GA /a/", np.sum(predict_best[V_Test==1]==Y_Test[V_Test==1])/np.sum(V_Test==1))
+    print("Testing  Acc after GA /u/", np.sum(predict_best[V_Test==2]==Y_Test[V_Test==2])/np.sum(V_Test==2))
+    print("Testing  Acc after GA /i/", np.sum(predict_best[V_Test==3]==Y_Test[V_Test==3])/np.sum(V_Test==3))
 
     if WANDB:
       wandb.log({"metrics/train_acc_ga" : training_acc_ga[sub_test],
                  "metrics/test_acc_ga"  : testing_acc_ga[sub_test],
-                 "metrics/test_acc_/a/" : np.sum(predict_best[V_Test==1]==Y_Test[V_Test==1])/np.sum(V_Test==1),
-                 "metrics/test_acc_/u/" : np.sum(predict_best[V_Test==2]==Y_Test[V_Test==2])/np.sum(V_Test==2),
-                 "metrics/test_acc_/i/" : np.sum(predict_best[V_Test==3]==Y_Test[V_Test==3])/np.sum(V_Test==3),
+                 "metrics/test_acc_a"   : np.sum(predict_best[V_Test==1]==Y_Test[V_Test==1])/np.sum(V_Test==1),
+                 "metrics/test_acc_u"   : np.sum(predict_best[V_Test==2]==Y_Test[V_Test==2])/np.sum(V_Test==2),
+                 "metrics/test_acc_i"   : np.sum(predict_best[V_Test==3]==Y_Test[V_Test==3])/np.sum(V_Test==3),
                  "metrics/p_value_ga"   : p_value_ga[sub_test]})
       run.finish()
