@@ -22,7 +22,7 @@ from pymoo.operators.mutation.pm import PM
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.util.display.multi import MultiObjectiveOutput
 
-from util.fitness import MyProblem, MyCallback
+from fitness import MyProblem, MyCallback
 
 # Just to eliminate the warnings
 def warn(*args, **kwargs):
