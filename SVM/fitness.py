@@ -83,11 +83,10 @@ class MyCallback(Callback):
     te_acc_best  = 0 
     predict_best = []
     for t in range(np.shape(X)[0]):
-
       w = X[Xid[t],:]
-      fw = np.repeat(w.reshape((1,-1)), algorithm.problem.n, axis=0)
 
       # Evalute the training performance
+      fw = np.repeat(w.reshape((1,-1)), algorithm.problem.n, axis=0)
       x_train_tf  = algorithm.problem.x_train * fw
       y_train_tf  = algorithm.problem.clf.predict(x_train_tf)
       temp_tr_acc = algorithm.problem.clf.score(x_train_tf, 

@@ -5,7 +5,6 @@ import sys
 import wandb
 import argparse
 import numpy as np
-import pandas as pd
 import scipy.io as sio
 
 from sklearn.svm import SVC
@@ -42,7 +41,6 @@ if __name__ == "__main__":
   VFI_1            = DATA_ALL['SUBJECT_VFI']       # VFI-1 Score
   SUBJECT_ID       = DATA_ALL['SUBJECT_ID']        # Sujbect ID
   SUBJECT_SKINFOLD = DATA_ALL['SUBJECT_SKINFOLD']  # Subject Skinfold Thickness
-  del DATA_ALL    # it's no longer used so just to save some memory
 
   leftout = 1
 
@@ -97,11 +95,10 @@ if __name__ == "__main__":
     print('VFI-1:', (VFI_1[sub_test][0][0]))
 
 
-    # ===== Load Testing Signals =====
+    # ===== Load Testing Samples =====
     num_signal = np.shape(FEAT_N[sub_test,0])[0]    
     X_Temp = FEAT_N[sub_test,0]
     Y_Temp = LABEL[sub_test,0].flatten()
-    V_Temp = VOWEL[sub_test,0].flatten()
 
     num_leftout = round(leftout*num_signal)
     index_leftout = np.random.choice(range(num_signal), 
@@ -111,14 +108,12 @@ if __name__ == "__main__":
 
     X_Test = X_Temp[index_leftout,:]
     Y_Test = Y_Temp[index_leftout]
-    V_Test = V_Temp[index_leftout]
 
     index_include = np.arange(num_signal)
     index_include = np.delete(index_include, index_leftout)
     print("Included Training samples: ", index_include.size)
     X_include = X_Temp[index_include,:]
     Y_include = Y_Temp[index_include]
-    V_include = V_Temp[index_include]
 
     # ===== Load Training Samples =====
     X = np.zeros((0,48))
