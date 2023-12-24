@@ -13,6 +13,8 @@ RUN apt-get update && \
     pip install nibabel &&\
     pip install pyyaml && \
     pip install scikit-learn && \
-    pip install pymoo
+    pip install pymoo && \
+    pip install tsai && \
+    pip install ipykernel
 
-ADD data/subjects_40_v6.mat /data/subjects_40_v6.mat
+ADD data/subjects_40_v6.mat /workspace/data/
