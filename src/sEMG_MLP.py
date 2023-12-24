@@ -54,6 +54,9 @@ if __name__ == "__main__":
   # NOTE
   # For the neural networks implementation, a high-level API was used in order to minimize implementation
   # more reference can be found in https://timeseriesai.github.io/tsai/
+  train_acc = np.zeros(40)
+  test_acc  = np.zeros(40)
+  p_value   = np.zeros(40)
   for sub_test in range(40):
     sub_txt = "R%03d"%(int(SUBJECT_ID[sub_test][0][0]))
     sub_group = 'Fatigued' if int(VFI_1[sub_test][0][0][0]) > 10 else 'Healthy'
@@ -93,21 +96,22 @@ if __name__ == "__main__":
     learn.fit_one_cycle(50, lr_max=1e-3)
 
     train_preds, train_targets = learn.get_preds(dl=dls_train)
-    train_acc = accuracy_score(train_targets, train_preds.argmax(dim=1))
-    print(f"Training acc: {train_acc}")
+    train_acc[sub_test] = accuracy_score(train_targets, train_preds.argmax(dim=1))
+    print(f"Training acc: {train_acc[sub_test]}")
 
     ret = partial_confound_test(train_targets.numpy(), train_preds.argmax(dim=1).numpy(), C_Train,
                                 cat_y=True, cat_yhat=True, cat_c=False,
                                 cond_dist_method='gam',
                                 progress=True)
-    print(f"P Value      : {ret.p}")
+    p_value[sub_test] = ret.p
+    print(f"P Value      : {p_value[sub_test]}")
 
     test_preds, test_targets = learn.get_preds(dl=dls_test)
-    test_acc = accuracy_score(test_targets, test_preds.argmax(dim=1))
-    print(f"Testing acc : {test_acc}")
+    test_acc[sub_test] = accuracy_score(test_targets, test_preds.argmax(dim=1))
+    print(f"Testing acc : {test_acc[sub_test]}")
 
     if WANDB:
       wandb.log({"subject_info/vfi_1" : int(VFI_1[sub_test][0][0]),
-                 "metrics/train_acc" : train_acc,
-                 "metrics/test_acc"  : test_acc,
-                 "metrics/p_value"   : ret.p})
+                 "metrics/train_acc" : train_acc[sub_test],
+                 "metrics/test_acc"  : test_acc[sub_test],
+                 "metrics/p_value"   : p_value[sub_test]})
