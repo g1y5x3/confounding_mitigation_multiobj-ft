@@ -67,6 +67,7 @@ if __name__ == "__main__":
   start_sub    = args.s
   num_sub      = args.nsub
   for sub_test in range(start_sub, start_sub + num_sub):
+    print(SUBJECT_ID[sub_test][0][0])
     sub_txt = "R%03d"%(int(SUBJECT_ID[sub_test][0][0]))
     sub_group = "Fatigued" if int(VFI_1[sub_test][0][0]) > 10 else "Healthy"
     print('\n===No.%d: %s===\n'%(sub_test+1, sub_txt))
