@@ -192,8 +192,8 @@ if __name__ == "__main__":
       print('P Value      after GA: ', p_value_ga[sub_test])
       print('Testing  Acc after GA: ', testing_acc_ga[sub_test])
 
-      wandb.log({"metrics/train_acc_ga" : training_acc_ga[sub_test],
-                 "metrics/test_acc_ga"  : testing_acc_ga[sub_test],
-                 "metrics/p_value_ga"   : p_value_ga[sub_test]})
+      wandb.log({"metrics/train_acc_cpt" : training_acc_ga[sub_test],
+                 "metrics/test_acc_cpt"  : testing_acc_ga[sub_test],
+                 "metrics/p_value_cpt"   : p_value_ga[sub_test]})
 
       run.finish()
