@@ -1,8 +1,11 @@
+import os
 import wandb
 import numpy as np
 from pymoo.core.callback import Callback
 from pymoo.core.problem import ElementwiseProblem
 from mlconfound.stats import partial_confound_test
+
+WANDB = os.getenv("WANDB", False)
 
 class MyProblem(ElementwiseProblem):
   def __init__(self, **kwargs):
@@ -57,6 +60,6 @@ class MyCallback(Callback):
   def notify(self, algorithm):
     print(f"Generation {algorithm.n_gen}")
     self.data["best"].append(algorithm.pop.get("F")[0].min())
-    wandb.log({"ga/n_gen"     : algorithm.n_gen,
-               "ga/train_acc" : 1-algorithm.pop.get("F")[0].min(),
-               "ga/p_value"   : 1-algorithm.pop.get("F")[1].min()})
+    if WANDB: wandb.log({"ga/n_gen"     : algorithm.n_gen,
+                         "ga/train_acc" : 1-algorithm.pop.get("F")[0].min(),
+                         "ga/p_value"   : 1-algorithm.pop.get("F")[1].min()})

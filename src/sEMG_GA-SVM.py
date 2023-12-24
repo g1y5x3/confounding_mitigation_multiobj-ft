@@ -2,26 +2,21 @@ import os
 import wandb
 import argparse
 import numpy as np
+from multiprocessing.pool import ThreadPool
+from mlconfound.stats import partial_confound_test
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
-from mlconfound.stats import partial_confound_test
-from multiprocessing.pool import ThreadPool
+from pymoo.optimize import minimize
 from pymoo.core.problem import StarmapParallelization
 from pymoo.algorithms.moo.nsga2 import NSGA2
-from pymoo.optimize import minimize
-from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
+from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.util.display.multi import MultiObjectiveOutput
+
 from fitness import MyProblem, MyCallback
 from util.sEMGhelpers import load_datafile, LoadTrainTestFeatures
-
-# Just to eliminate the warnings
-def warn(*args, **kwargs):
-    pass
-import warnings
-warnings.warn = warn
 
 WANDB = os.getenv("WANDB", False)
 NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
@@ -106,10 +101,9 @@ if __name__ == "__main__":
     testing_acc[sub_test] = accuracy_score(label_predict, Y_Test)
     print('Testing  Acc: ', testing_acc[sub_test])
 
-    if WANDB:
-      wandb.log({"metrics/train_acc" : training_acc[sub_test],
-                 "metrics/test_acc"  : testing_acc[sub_test],
-                 "metrics/p_value"   : p_value[sub_test]})
+    if WANDB: wandb.log({"metrics/train_acc" : training_acc[sub_test],
+                         "metrics/test_acc"  : testing_acc[sub_test],
+                         "metrics/p_value"   : p_value[sub_test]})
 
     print('Genetic Algorithm Optimization...')
 
@@ -132,15 +126,15 @@ if __name__ == "__main__":
                       output    = MultiObjectiveOutput())
 
     res = minimize(problem,
-                    algorithm,
-                    ("n_gen", num_generation),
-                    callback = MyCallback(),
-                    verbose=False)
+                   algorithm,
+                   ("n_gen", num_generation),
+                   callback = MyCallback(),
+                   verbose=True)
 
     print('Threads:', res.exec_time)
     pool.close()
 
-    # Evaluate the results discovered by GA
+    # Evaluate all the solutions returned by GA
     Xid = np.argsort(res.F[:,0])
     acc_best = 0
     for t in range(np.shape(res.X)[0]):
@@ -148,7 +142,6 @@ if __name__ == "__main__":
 
       # Evalute training performance
       n = np.shape(X_Train)[0]
-      # fw = np.matlib.repmat(w, n, 1)
       fw = np.repeat(w.reshape((1,-1)), n, axis=0)
       x_train_tf = X_Train * fw
       Y_tf_train = clf.predict(x_train_tf)
@@ -163,15 +156,14 @@ if __name__ == "__main__":
 
       # Evaluate the testing performance
       n = np.shape(X_Test)[0]
-      # fw = np.matlib.repmat(w, n, 1)
       fw = np.repeat(w.reshape((1,-1)), n, axis=0)
       x_test_tf = X_Test * fw
       Y_tf_test = clf.predict(x_test_tf)
       temp_te_acc = accuracy_score(Y_tf_test, Y_Test)
 
-      wandb.log({"pareto-front/train_acc": temp_tr_acc,
-                 "pareto-front/p_value"  : temp_p_value,
-                 "pareto-front/test_acc" : temp_te_acc})
+      if WANDB: wandb.log({"pareto-front/train_acc": temp_tr_acc,
+                           "pareto-front/p_value"  : temp_p_value,
+                           "pareto-front/test_acc" : temp_te_acc})
 
       # Detect if the current chromosome gives the best predictio`n
       if temp_te_acc > acc_best:
@@ -181,12 +173,12 @@ if __name__ == "__main__":
         p_value_ga[sub_test]      = temp_p_value
         testing_acc_ga[sub_test]  = temp_te_acc
 
-      print('Training Acc after GA: ', training_acc_ga[sub_test])
-      print('P Value      after GA: ', p_value_ga[sub_test])
-      print('Testing  Acc after GA: ', testing_acc_ga[sub_test])
+    print("Training Acc after GA: ", training_acc_ga[sub_test])
+    print("P Value      after GA: ", p_value_ga[sub_test])
+    print("Testing  Acc after GA: ", testing_acc_ga[sub_test])
 
+    if WANDB:
       wandb.log({"metrics/train_acc_cpt" : training_acc_ga[sub_test],
                  "metrics/test_acc_cpt"  : testing_acc_ga[sub_test],
                  "metrics/p_value_cpt"   : p_value_ga[sub_test]})
-
       run.finish()
