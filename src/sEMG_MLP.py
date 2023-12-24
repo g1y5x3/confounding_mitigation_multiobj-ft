@@ -9,6 +9,7 @@ from util.sEMGhelpers import load_datafile, LoadTrainTestFeatures
 
 # environment variable for the experiment
 WANDB = os.getenv("WANDB", False)
+NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
 GROUP = os.getenv("GROUP", "MLP-sEMG")
 
 if __name__ == "__main__":
@@ -25,20 +26,19 @@ if __name__ == "__main__":
   p_value   = np.zeros(40)
   for sub_test in range(40):
     sub_txt = "R%03d"%(int(SUBJECT_ID[sub_test][0][0]))
-    sub_group = 'Fatigued' if int(VFI_1[sub_test][0][0][0]) > 10 else 'Healthy'
-    print(f"Test Subject {sub_txt}:")
-    print(f"VFI-1: {VFI_1[sub_test][0][0][0]}")
+    sub_group = "Fatigued" if int(VFI_1[sub_test][0][0][0]) > 10 else "Healthy"
+    print('\n===No.%d: %s===\n'%(sub_test+1, sub_txt))
+    print('VFI-1:', (VFI_1[sub_test][0][0]))
 
     cbs = None
     if WANDB:
-      run = wandb.init(project="Confounding-Mitigation-In-Deep-Learning",
+      run = wandb.init(project=NAME,
                        group=GROUP,
                        name=sub_txt,
                        tags=[sub_group],
                        reinit=True)
       cbs = WandbCallback(log_preds=False)
 
-    #  Load training and testing features
     print("Loading training and testing set")
     X_Train, Y_Train, C_Train, X_Test, Y_Test = LoadTrainTestFeatures(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
 
@@ -76,8 +76,7 @@ if __name__ == "__main__":
     test_acc[sub_test] = accuracy_score(test_targets, test_preds.argmax(dim=1))
     print(f"Testing acc : {test_acc[sub_test]}")
 
-    if WANDB:
-      wandb.log({"subject_info/vfi_1" : int(VFI_1[sub_test][0][0]),
-                 "metrics/train_acc"  : train_acc[sub_test],
-                 "metrics/test_acc"   : test_acc[sub_test],
-                 "metrics/p_value"    : p_value[sub_test]})
+    if WANDB: wandb.log({"subject_info/vfi_1" : int(VFI_1[sub_test][0][0]),
+                         "metrics/train_acc"  : train_acc[sub_test],
+                         "metrics/test_acc"   : test_acc[sub_test],
+                         "metrics/p_value"    : p_value[sub_test]})
