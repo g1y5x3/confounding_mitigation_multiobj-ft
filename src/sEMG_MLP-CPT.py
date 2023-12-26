@@ -1,0 +1,99 @@
+import os
+import wandb
+import numpy as np
+from tsai.all import get_splits, Categorize, TSDatasets, TSDataLoaders, MLP, Learner, accuracy
+from fastai.callback.wandb import WandbCallback
+from sklearn.metrics import accuracy_score
+from mlconfound.stats import partial_confound_test
+
+from util.sEMGhelpers import load_datafile, LoadTrainTestFeatures
+from cpt import conditional_log_likelihood
+
+from fastai.losses import CrossEntropyLossFlat
+
+
+# When the loss object is being initiated, it also estimates the prob density function of q(Y|C)
+import  torch
+import torch.nn.functional as F
+from fastai.losses import BaseLoss
+class CustomLoss(torch.nn.Module):
+  def __init__(self):
+    super().__init__()
+    print("Estimating Q(C|Y)...")
+
+  # preds.shape   - torch.Size([32, 2])
+  # targets.shape - torch.Size([32])
+  def forward(self, preds, targets):
+    return F.cross_entropy(preds, targets)
+
+# environment variable for the experiment
+WANDB = os.getenv("WANDB", False)
+NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
+GROUP = os.getenv("GROUP", "MLP-sEMG-CPT")
+
+# NOTE
+# Most of the deep learning pipeline here are implemented through fastai API, tsai is just another
+# API wrapper that provides utilities for time-domain inputs
+if __name__ == "__main__":
+  # X - FEAT_N
+  # Y - LABEL
+  # C - SUBJECT_SKINFOLD
+  FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_datafile("data/subjects_40_v6")
+
+  # NOTE
+  # For the neural networks implementation, a high-level API was used in order to minimize implementation
+  # more reference can be found in https://timeseriesai.github.io/tsai/
+  train_acc = np.zeros(40)
+  test_acc  = np.zeros(40)
+  p_value   = np.zeros(40)
+  for sub_test in range(20, 21):
+    sub_txt = "R%03d"%(int(SUBJECT_ID[sub_test][0][0]))
+    sub_group = "Fatigued" if int(VFI_1[sub_test][0][0][0]) > 10 else "Healthy"
+    print('\n===No.%d: %s===\n'%(sub_test+1, sub_txt))
+    print('VFI-1:', (VFI_1[sub_test][0][0]))
+
+    cbs = None
+    if WANDB:
+      run = wandb.init(project=NAME, group=GROUP, name=sub_txt, tags=[sub_group], reinit=True)
+      cbs = WandbCallback(log_preds=False)
+
+    print("Loading training and testing set")
+    X_Train, Y_Train, C_Train, X_Test, Y_Test = LoadTrainTestFeatures(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
+
+    # Setting "stratify" to True ensures that the relative class frequencies are approximately preserved in each train and validation fold.
+    splits = get_splits(Y_Train, valid_size=.1, stratify=True, random_state=123, shuffle=True, show_plot=False)
+    tfms   = [None, [Categorize()]]
+    dsets       = TSDatasets(X_Train, Y_Train, tfms=tfms, splits=splits)
+    dsets_train = TSDatasets(X_Train, Y_Train, tfms=tfms) # keep an unsplit copy for computing the p-value
+    dsets_test  = TSDatasets(X_Test,  Y_Test,  tfms=tfms)
+    dls       = TSDataLoaders.from_dsets(dsets.train, dsets.valid, shuffle_train=True, bs=32, num_workers=0)
+    dls_train = dls.new(dsets_train)
+    dls_test  = dls.new(dsets_test)
+
+    # This model is pre-defined in https://timeseriesai.github.io/tsai/models.mlp.html
+    model = MLP(c_in=dls.vars, c_out=dls.c, seq_len=48, layers=[50, 50, 50], use_bn=True)
+    print(model)
+
+    learn = Learner(dls, model, loss_func=CustomLoss(), metrics=accuracy, cbs=cbs)
+    learn.lr_find()
+    learn.fit_one_cycle(50, lr_max=1e-3)
+
+    train_preds, train_targets = learn.get_preds(dl=dls_train)
+    train_acc[sub_test] = accuracy_score(train_targets, train_preds.argmax(dim=1))
+    print(f"Training acc: {train_acc[sub_test]}")
+
+    ret = partial_confound_test(train_targets.numpy(), train_preds.argmax(dim=1).numpy(), C_Train,
+                                cat_y=True, cat_yhat=True, cat_c=False,
+                                cond_dist_method='gam',
+                                progress=True)
+    p_value[sub_test] = ret.p
+    print(f"P Value     : {p_value[sub_test]}")
+
+    test_preds, test_targets = learn.get_preds(dl=dls_test)
+    test_acc[sub_test] = accuracy_score(test_targets, test_preds.argmax(dim=1))
+    print(f"Testing acc : {test_acc[sub_test]}")
+
+    if WANDB: wandb.log({"subject_info/vfi_1" : int(VFI_1[sub_test][0][0]),
+                         "metrics/train_acc_opt"  : train_acc[sub_test],
+                         "metrics/test_acc_opt"   : test_acc[sub_test],
+                         "metrics/p_value_opt"    : p_value[sub_test]})
