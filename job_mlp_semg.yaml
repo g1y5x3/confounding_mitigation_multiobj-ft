@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: exp-mlp-semg
+spec:
+  ttlSecondsAfterFinished: 100
+  template:
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: nvidia.com/gpu.product
+                operator: In
+                values:
+                - NVIDIA-GeForce-RTX-3090
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: "1G"
+      containers:
+      - name: cpu-container
+        image: gitlab-registry.nrp-nautilus.io/yg5d6/cptdeeplearning:semg
+        command: ["/bin/bash", "-c"]
+        args:
+          - wandb login ddd37dd14701ecdeaff9bf3bbb1f84fab4cc2a00;
+            git clone https://github.com/g1y5x3/confounding_mitigation.git;
+            cd confounding_mitigation;
+            mv ../data .;
+            pip install tsai;
+            pip install ipykernel;
+            WANDB=1 GROUP=MLP-sEMG-1 python3 src/sEMG_MLP.py;
+        resources:
+          limits:
+            memory: "8G"
+            cpu: "4"
+            nvidia.com/gpu: "1"
+          requests:
+            memory: "8G"
+            cpu: "4"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      restartPolicy: Never
