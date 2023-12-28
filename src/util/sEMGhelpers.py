@@ -3,8 +3,9 @@ import scipy.io as sio
 
 def partition(FEAT, LABEL, SUBJECT_SKINFOLD, sub_test):
   # Load testing samples
-  X_Test     = FEAT[sub_test,0]
-  Y_Test     = LABEL[sub_test,0].flatten()
+  X_Test = FEAT[sub_test,0]
+  Y_Test = LABEL[sub_test,0].flatten()
+  C_Test = np.mean(np.mean(SUBJECT_SKINFOLD[sub_test,:]), axis=1)
   print(f'# of Testing Samples {len(Y_Test)}')
 
   # Load training samples
@@ -23,7 +24,7 @@ def partition(FEAT, LABEL, SUBJECT_SKINFOLD, sub_test):
   print('# of Healthy Samples: %d'%(np.sum(Y_Train == -1)))
   print('# of Fatigued Samples: %d'%(np.sum(Y_Train == 1)))   
   
-  return X_Train, Y_Train, C_Train, X_Test, Y_Test
+  return X_Train, Y_Train, C_Train, X_Test, Y_Test, C_Test
 
 # mainly just for the sake of not keeping the copy of DATA_ALL
 def load_datafile(file):
