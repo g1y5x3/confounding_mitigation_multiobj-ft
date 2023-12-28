@@ -1,5 +1,6 @@
-import numpy as np
 import wandb
+import argparse
+import numpy as np
 from tsai.all import *
 from fastai.callback.wandb import *
 from fastai.layers import *
@@ -13,6 +14,10 @@ NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
 GROUP = os.getenv("GROUP", "MLP-sEMG")
 
 if __name__ == "__main__":
+  parser = argparse.ArgumentParser(description="sEMG MLP experiments")
+  parser.add_argument('-bs', type=int, default=128, help="batch size")
+  parser.add_argument('-nw', type=int, default=2,   help="number of workers")
+  args = parser.parse_args()
   # X - FEAT_N
   # Y - LABEL
   # C - SUBJECT_SKINFOLD
@@ -48,7 +53,7 @@ if __name__ == "__main__":
     dsets       = TSDatasets(X_Train, Y_Train, tfms=tfms, splits=splits)
     dsets_train = TSDatasets(X_Train, Y_Train, tfms=tfms) # keep an unsplit copy for computing the p-value
     dsets_test  = TSDatasets(X_Test,  Y_Test,  tfms=tfms)
-    dls       = TSDataLoaders.from_dsets(dsets.train, dsets.valid, shuffle_train=True, bs=128, num_workers=2)
+    dls       = TSDataLoaders.from_dsets(dsets.train, dsets.valid, shuffle_train=True, bs=args.bs, num_workers=args.nw)
     dls_train = dls.new(dsets_train)
     dls_test  = dls.new(dsets_test)
 
