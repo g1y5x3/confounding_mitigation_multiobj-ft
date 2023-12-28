@@ -21,7 +21,7 @@ from mlconfound.simulate import simulate_y_c_yhat
 # needed. Therefore, the modification here is to separate out I. and II. The last step is done
 # inside the loss function of neural networks in able to utilize autograd.
 #
-# 2. All function implementation uses the original notation for
+# 2. All function are implemented based on notation for
 # H0: X ⟂ Y|C
 # but when these functions are called, the input arguments are given as
 # H0: C ⟂ Ŷ|Y
