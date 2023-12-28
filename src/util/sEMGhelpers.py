@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.io as sio
 
-def LoadTrainTestFeatures(FEAT, LABEL, SUBJECT_SKINFOLD, sub_test):
+def partition(FEAT, LABEL, SUBJECT_SKINFOLD, sub_test):
   # Load testing samples
   X_Test     = FEAT[sub_test,0]
   Y_Test     = LABEL[sub_test,0].flatten()

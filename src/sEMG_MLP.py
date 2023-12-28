@@ -6,7 +6,7 @@ from fastai.callback.wandb import *
 from fastai.layers import *
 from sklearn.metrics import accuracy_score
 from mlconfound.stats import partial_confound_test
-from util.sEMGhelpers import load_datafile, LoadTrainTestFeatures
+from util.sEMGhelpers import load_datafile, partition
 
 # environment variable for the experiment
 WANDB = os.getenv("WANDB", False)
@@ -24,7 +24,8 @@ if __name__ == "__main__":
   FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_datafile("data/subjects_40_v6")
 
   # NOTE
-  # For the neural networks implementation, a high-level API was used in order to minimize implementation
+  # For the neural networks implementation, a high-level API was used in order to minimize
+  # implementation tsai is wrapped around fastai's API but it has a better numpy interface
   # more reference can be found in https://timeseriesai.github.io/tsai/
   train_acc = np.zeros(40)
   test_acc  = np.zeros(40)
@@ -45,7 +46,7 @@ if __name__ == "__main__":
       cbs = WandbCallback(log_preds=False)
 
     print("Loading training and testing set")
-    X_Train, Y_Train, C_Train, X_Test, Y_Test = LoadTrainTestFeatures(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
+    X_Train, Y_Train, C_Train, X_Test, Y_Test = partition(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
 
     # Setting "stratify" to True ensures that the relative class frequencies are approximately preserved in each train and validation fold.
     splits = get_splits(Y_Train, valid_size=.1, stratify=True, random_state=123, shuffle=True, show_plot=False)
@@ -63,6 +64,10 @@ if __name__ == "__main__":
 
     # Training loop is abstracted by the fastai API
     learn = Learner(dls, model, loss_func=CrossEntropyLossFlat(), metrics=accuracy, cbs=cbs)
+
+    # Basically apply some tricks to make it converge faster
+    # https://docs.fast.ai/callback.schedule.html#learner.lr_find
+    # https://docs.fast.ai/callback.schedule.html#learner.fit_one_cycle
     learn.lr_find()
     learn.fit_one_cycle(50, lr_max=1e-3)
 
