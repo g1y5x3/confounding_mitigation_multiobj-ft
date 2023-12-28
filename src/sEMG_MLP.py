@@ -48,7 +48,7 @@ if __name__ == "__main__":
     dsets       = TSDatasets(X_Train, Y_Train, tfms=tfms, splits=splits)
     dsets_train = TSDatasets(X_Train, Y_Train, tfms=tfms) # keep an unsplit copy for computing the p-value
     dsets_test  = TSDatasets(X_Test,  Y_Test,  tfms=tfms)
-    dls       = TSDataLoaders.from_dsets(dsets.train, dsets.valid, shuffle_train=True, bs=32, num_workers=0)
+    dls       = TSDataLoaders.from_dsets(dsets.train, dsets.valid, shuffle_train=True, bs=128, num_workers=2)
     dls_train = dls.new(dsets_train)
     dls_test  = dls.new(dsets_test)
 
