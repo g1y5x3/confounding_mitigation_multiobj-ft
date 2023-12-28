@@ -21,11 +21,7 @@ def LoadTrainTestFeatures(FEAT, LABEL, SUBJECT_SKINFOLD, sub_test):
       C_Train = np.concatenate((C_Train, c_s), axis=0)
 
   print('# of Healthy Samples: %d'%(np.sum(Y_Train == -1)))
-  print('# of Fatigued Samples: %d'%(np.sum(Y_Train == 1)))
-
-  # convert labels from [-1, 1] to [0, 1] so the probability density function estimation
-  # will be consistent with the dataset transformation
-  Y_Train = np.where(Y_Train == -1, 0, 1)
+  print('# of Fatigued Samples: %d'%(np.sum(Y_Train == 1)))   
   
   return X_Train, Y_Train, C_Train, X_Test, Y_Test
 
