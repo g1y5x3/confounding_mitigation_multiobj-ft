@@ -29,12 +29,16 @@ from mlconfound.simulate import simulate_y_c_yhat
 # I. density estimation Q(X|C)
 # xdtype = 'categorical' - X is a categorical variable
 # xdtype = 'numerical'   - X is a continuous variable
+# Each element [i,j] in the result matrix is the log-likelihood of observing X[j] given C[i]
 def conditional_log_likelihood(X, C, xdtype='categorical'):
   default_kwargs = {'n_splines': 8, 'dtype': [xdtype]}
+  # https://pygam.readthedocs.io/en/latest/notebooks/tour_of_pygam.html
   fit = LinearGAM(**default_kwargs).gridsearch(y=X, X=C.reshape(-1, 1), progress=False)  # todo: multivariate case
   mu = np.array(fit.predict(C))
   sigma = np.repeat(np.std(X - mu), len(C))
-  # X|C = C_i ~ N(mu[i], sig2[i])
+
+  # TODO If C is continuous variable, it makes to track based on the entire len(C)
+  # However, if C is categorical, in theory it's only necessarily to track each category
   return np.array([norm.logpdf(X, loc=m, scale=sigma) for m in mu]).T
 
 # II. MCMC permutation sampling for [C_{pi_1}, C_{pi_2}, ..., C_{pi_m}]
@@ -88,18 +92,18 @@ def verify_implementation(random_state, num_perm, H1_y, H1_c, H1_yhat):
   # compute t_xy which is just Pearson correlation in this case but is replaced with a
   # different metric in the neural networks loss function
   t_x_y    = np.corrcoef(x, y)[0,1] ** 2
-  t_x_yhat = np.zeros(num_perm)
+  t_xpi_y = np.zeros(num_perm)
   y_tile   = np.tile(y, (num_perm,1))
   for i in range(num_perm):
-    t_x_yhat[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1] ** 2
-  p = np.sum(t_x_yhat >= t_x_y) / len(t_x_yhat)
+    t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1] ** 2
+  p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
 
   # verify the results to make sure that they match with the original implementation
   print(f"original implementation   p-value: {ret.p}")
   print(f"simplified implementation p-value: {p}")
 
   assert np.allclose(ret.p, p), "p-value does not match with original implementation"
-  assert np.allclose(ret.null_distribution, t_x_yhat), "null distribution does not match with original implementation"
+  assert np.allclose(ret.null_distribution, t_xpi_y), "null distribution does not match with original implementation"
 
 if __name__ == "__main__":
   # exampled from https://github.com/pni-lab/mlconfound/blob/master/notebooks/quickstart.ipynb used to verify
