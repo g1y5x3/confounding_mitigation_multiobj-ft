@@ -5,17 +5,17 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import Dataset
-from fastai.data.core import DataLoaders
 from fastai.learner import Learner
+from fastai.data.core import DataLoaders
 from fastai.callback.wandb import WandbCallback
 from tsai.all import get_splits, MLP
+from joblib import Parallel, delayed
 from sklearn.metrics import accuracy_score
-from util.sEMGhelpers import load_datafile, partition
 from mlconfound.stats import partial_confound_test
+#
+from util.sEMGhelpers import load_datafile, partition
 from cpt import conditional_log_likelihood, generate_X_CPT_MC
 
-# The easiest way to integrate with fastai's API is to redefine the class for
-# dataset, model, loss, metric
 class sEMGDataset(Dataset):
   def __init__(self, X_Train, Y_Train, C_Train=None):
     self.X_Train = X_Train
@@ -33,28 +33,80 @@ class sEMGDataset(Dataset):
 
 # model is the same but passing an additional input variable
 class MLPC(MLP):
-  def __init__(self, c_in, c_out, seq_len, layers=..., ps=[0.1, 0.2, 0.2], act=nn.ReLU(inplace=True), use_bn=False, bn_final=False, lin_first=False,
-               fc_dropout=0., y_range=None):
+  def __init__(self, c_in, c_out, seq_len, layers,
+               ps=[0.1, 0.2, 0.2], act=nn.ReLU(inplace=True), use_bn=False, bn_final=False, lin_first=False, fc_dropout=0., y_range=None):
     super().__init__(c_in, c_out, seq_len, layers, ps, act, use_bn, bn_final, lin_first, fc_dropout, y_range)
 
-  def forward(self, xc):
-    x, c = xc
+  def forward(self, x_c):
+    x, c = x_c
     return (super().forward(x), c)
 
-class CrossEntropyCPTLoss(nn.Module):
-  def __init__(self, y, c):
+class CrossEntropyLoss(nn.Module):
+  def __init__(self):
     super().__init__()
-    print("Estimating Q(C|Y)...")
-    print(y.shape)
-    print(c.shape)
-    # estimate the condtional log likelihood function
 
-  def forward(self, preds_confound, targets):
-    preds, confound = preds_confound
-    return F.cross_entropy(preds, targets)
+  def forward(self, yhat_c, y):
+    yhat, _ = yhat_c
+    return F.cross_entropy(yhat, y)
+
+
+# TODO how to make it faster?
+class CrossEntropyCPTLoss(nn.Module):
+  def __init__(self, mcmc_steps=50, random_state=123, num_perm=1000):
+    super().__init__()
+    self.mcmc_steps = mcmc_steps   # this is the default value used inside original CPT function
+    self.random_state = random_state
+    self.num_perm = num_perm
+    # ideally q(c|y) can be estimated here and use the corresponding log-likelihood when
+    # each batch is being fetched. however, the only technicial difficulty is that the dataloader
+    # will shuffle the entire data which makes it harder to track
+
+  def workhorse(self, c, _random_state):
+    # batched os job_batch for efficient parallelization
+    Pi = generate_X_CPT_MC(self.mcmc_steps, self.cond_log_like_mat, self.Pi_init, random_state=_random_state)
+    return c[Pi]
+
+  # TODO vectorize this implementation
+  # https://github.com/zhenxingjian/Partial_Distance_Correlation/blob/b088801996acefe38a67dff59bb8cbe3b20c7d91/Partial_Distance_Correlation.ipynb
+  def distance_correlation(self, c, y):
+    matrix_a = torch.sqrt(torch.sum(torch.square(c.unsqueeze(0) - c.unsqueeze(1)), dim = -1) + 1e-12)
+    matrix_b = torch.sqrt(torch.sum(torch.square(y.unsqueeze(0) - y.unsqueeze(1)), dim = -1) + 1e-12)
+
+    matrix_A = matrix_a - torch.mean(matrix_a, dim = 0, keepdims= True) - torch.mean(matrix_a, dim = 1, keepdims= True) + torch.mean(matrix_a)
+    matrix_B = matrix_b - torch.mean(matrix_b, dim = 0, keepdims= True) - torch.mean(matrix_b, dim = 1, keepdims= True) + torch.mean(matrix_b)
+
+    gamma_XY = torch.sum(matrix_A * matrix_B)/ (matrix_A.shape[0] * matrix_A.shape[1])
+    gamma_XX = torch.sum(matrix_A * matrix_A)/ (matrix_A.shape[0] * matrix_A.shape[1])
+    gamma_YY = torch.sum(matrix_B * matrix_B)/ (matrix_A.shape[0] * matrix_A.shape[1])
+
+    correlation_r = gamma_XY/torch.sqrt(gamma_XX * gamma_YY + 1e-9)
+    return correlation_r
+
+  def cpt_p(self, c, yhat, y):
+    bs = y.shape[0]
+    # estimating q(c|y)
+    self.cond_log_like_mat = conditional_log_likelihood(X=c.numpy(), C=y.numpy(), xdtype='categorical')
+    self.Pi_init = generate_X_CPT_MC(self.mcmc_steps*5, self.cond_log_like_mat, np.arange(bs, dtype=int), self.random_state)
+    # sampling permutations of c
+    rng = np.random.default_rng(self.random_state)
+    random_states = rng.integers(np.iinfo(np.int32).max, size=self.num_perm)
+    c_pi = torch.tensor(np.array(Parallel(n_jobs=-1)(delayed(self.workhorse)(c, i) for i in random_states)), dtype=torch.float32)
+    # compute p-value
+    t_yhat_c = self.distance_correlation(yhat.reshape([bs, -1]), c.reshape([bs, -1])).repeat(self.num_perm)
+    t_yhat_cpi = torch.zeros(self.num_perm)
+    for i in range(self.num_perm):
+      t_yhat_cpi[i] = self.distance_correlation(yhat.reshape([bs, -1]), c_pi[i,:].reshape([bs, -1]))
+
+    return torch.sigmoid(t_yhat_c - t_yhat_cpi).mean()
+
+  def __call__(self, yhat_c, y):
+    yhat, c = yhat_c
+    p = self.cpt_p(c, yhat, y)
+
+    return F.cross_entropy(yhat, y) + (1 - p)
 
 def accuracy(preds_confound, targets):
-  preds, confound = preds_confound
+  preds, _, = preds_confound
   return (preds.argmax(dim=-1) == targets).float().mean()
 
 # environment variable for the experiment
@@ -91,9 +143,6 @@ if __name__ == "__main__":
 
     print("Loading training and testing set")
     X_Train, Y_Train, C_Train, X_Test, Y_Test, C_Test = partition(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
-    print(X_Test.shape)
-    print(Y_Test.shape)
-    print(C_Test.shape)
     # convert labels from [-1, 1] to [0, 1] so the probability density function estimation will be consistent with the dataset transformation
     Y_Train = np.where(Y_Train == -1, 0, 1)
 
@@ -104,22 +153,22 @@ if __name__ == "__main__":
     dsets_valid = sEMGDataset(X_Train[splits[1],:], Y_Train[splits[1]], C_Train[splits[1]])
     dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test)
 
-    dls      = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=True, bs=128, num_workers=2, pin_memory=True)
+    dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=True, bs=128, num_workers=2, pin_memory=True)
 
     # This model is pre-defined in https://timeseriesai.github.io/tsai/models.mlp.html
     model = MLPC(c_in=1, c_out=2, seq_len=48, layers=[50, 50, 50], use_bn=True)
     print(model)
 
-    learn = Learner(dls, model, loss_func=CrossEntropyCPTLoss(y=Y_Train, c=C_Train), metrics=accuracy, cbs=cbs)
+    learn = Learner(dls, model, loss_func=CrossEntropyCPTLoss(), metrics=accuracy, cbs=cbs)
 
     # Basically apply some tricks to make it converge faster
     # https://docs.fast.ai/callback.schedule.html#learner.lr_find
     # https://docs.fast.ai/callback.schedule.html#learner.fit_one_cycle
     learn.lr_find()
-    learn.fit_one_cycle(50, lr_max=1e-3)
+    learn.fit_one_cycle(1, lr_max=1e-3)
 
     # Training accuracy
-    train_output, train_targets = learn.get_preds(dl=dls.train)
+    train_output, train_targets = learn.get_preds(dl=dls.train, with_loss=False)
     train_preds, train_c = train_output
     train_acc[sub_test] = accuracy_score(train_targets, train_preds.argmax(dim=1))
     print(f"Training acc: {train_acc[sub_test]}")
@@ -134,7 +183,7 @@ if __name__ == "__main__":
 
     # Testing accuracy
     dls_test = dls.new(dsets_test)
-    test_output, test_targets = learn.get_preds(dl=dls_test)
+    test_output, test_targets = learn.get_preds(dl=dls_test, with_loss=False)
     test_preds, test_c = test_output
     test_acc[sub_test] = accuracy_score(test_targets, test_preds.argmax(dim=1))
     print(f"Testing acc : {test_acc[sub_test]}")

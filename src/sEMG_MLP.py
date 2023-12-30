@@ -46,7 +46,7 @@ if __name__ == "__main__":
       cbs = WandbCallback(log_preds=False)
 
     print("Loading training and testing set")
-    X_Train, Y_Train, _, X_Test, Y_Test, _ = partition(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
+    X_Train, Y_Train, C_Train, X_Test, Y_Test, _ = partition(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
 
     # Setting "stratify" to True ensures that the relative class frequencies are approximately preserved in each train and validation fold.
     splits = get_splits(Y_Train, valid_size=.1, stratify=True, random_state=123, shuffle=True, show_plot=False)
