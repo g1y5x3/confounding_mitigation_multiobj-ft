@@ -58,6 +58,32 @@ def generate_X_CPT_MC(nstep, log_likelihood_mat, Pi, random_state=None):
   # Pi is a permutations of array indices
   return Pi
 
+def cpt_p_pearson(c, yhat, y, mcmc_steps=50, random_state=None, num_perm=1000, dtype='numerical'):
+  # fully confounder test    H0: X ⟂ Y|C
+  # partical confounder test H0: C ⟂ Ŷ|Y
+  x, y, c = c, yhat, y
+  cond_log_like_mat = conditional_log_likelihood(X=x, C=c, xdtype=dtype)
+  Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(len(x), dtype=int), random_state)
+
+  def workhorse(_random_state):
+    # batched os job_batch for efficient parallelization
+    Pi = generate_X_CPT_MC(mcmc_steps, cond_log_like_mat, Pi_init, random_state=_random_state)
+    return x[Pi]
+
+  rng = np.random.default_rng(random_state)
+  random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
+
+  x_perm = np.array(Parallel(n_jobs=-1)(delayed(workhorse)(i) for i in random_states))
+  # compute t_xy which is just Pearson correlation in this case but is replaced with a
+  # different metric in the neural networks loss function
+  t_x_y    = np.corrcoef(x, y)[0,1] ** 2
+  t_xpi_y = np.zeros(num_perm)
+  y_tile   = np.tile(y, (num_perm,1))
+  for i in range(num_perm):
+    t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1] ** 2
+  p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
+  return p, t_xpi_y
+
 def verify_implementation(random_state, num_perm, H1_y, H1_c, H1_yhat):
   # original function
   ret = partial_confound_test(H1_y, H1_yhat, H1_c, num_perms=num_perm, return_null_dist=True, random_state=random_state, n_jobs=-1)
@@ -69,34 +95,7 @@ def verify_implementation(random_state, num_perm, H1_y, H1_c, H1_yhat):
                       'Expected R2(y^,c)': [np.round(ret.expected_r2_yhat_c, 3)],
                       'R2(y^,c)' : [ret.r2_yhat_c]}))
 
-  # fully confounder test    H0: X ⟂ Y|C
-  # partical confounder test H0: C ⟂ Ŷ|Y
-  x, y, c = H1_c, H1_yhat, H1_y
-  mcmc_steps = 50   # this is the default value used inside original CPT function
-  cond_log_like_mat = conditional_log_likelihood(X=x, C=c, xdtype='numerical')
-
-  Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(len(x), dtype=int), random_state)
-
-
-  def workhorse(_random_state):
-    # batched os job_batch for efficient parallelization
-    Pi = generate_X_CPT_MC(mcmc_steps, cond_log_like_mat, Pi_init, random_state=_random_state)
-    return x[Pi]
-
-  rng = np.random.default_rng(random_state)
-  random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
-  # rows    - total # of permutations that are being sampled
-  # columns - same as the length of array x
-  x_perm = np.array(Parallel(n_jobs=-1)(delayed(workhorse)(i) for i in random_states))
-
-  # compute t_xy which is just Pearson correlation in this case but is replaced with a
-  # different metric in the neural networks loss function
-  t_x_y    = np.corrcoef(x, y)[0,1] ** 2
-  t_xpi_y = np.zeros(num_perm)
-  y_tile   = np.tile(y, (num_perm,1))
-  for i in range(num_perm):
-    t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1] ** 2
-  p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
+  p, t_xpi_y = cpt_p_pearson(H1_c, H1_yhat, H1_y, random_state=random_state, num_perm=num_perm)
 
   # verify the results to make sure that they match with the original implementation
   print(f"original implementation   p-value: {ret.p}")
