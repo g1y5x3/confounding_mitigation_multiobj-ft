@@ -98,9 +98,9 @@ class CrossEntropyCPTLoss(nn.Module):
 
   def __call__(self, yhat_c, y):
     yhat, c = yhat_c
-    # p = cpt_p(c, yhat, y, self.mcmc_steps, self.random_state, self.num_perm)
-    # return F.cross_entropy(yhat, y) - p
-    return F.cross_entropy(yhat, y)
+    p = cpt_p_dcor(c, yhat, y, self.mcmc_steps, self.random_state, self.num_perm)
+    return F.cross_entropy(yhat, y) - p
+    # return F.cross_entropy(yhat, y)
 
 def accuracy(preds_confound, targets):
   preds, _, = preds_confound

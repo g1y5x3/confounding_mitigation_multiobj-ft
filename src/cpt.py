@@ -31,8 +31,8 @@ from mlconfound.simulate import simulate_y_c_yhat
 # xdtype = 'numerical'   - X is a continuous variable
 # Each element [i,j] in the result matrix is the log-likelihood of observing X[j] given C[i]
 def conditional_log_likelihood(X, C, xdtype='categorical'):
-  default_kwargs = {'n_splines': 8, 'dtype': [xdtype]}
   # https://pygam.readthedocs.io/en/latest/notebooks/tour_of_pygam.html
+  default_kwargs = {'n_splines': 8, 'dtype': [xdtype]}
   fit = LinearGAM(**default_kwargs).gridsearch(y=X, X=C.reshape(-1, 1), progress=False)  # todo: multivariate case
   mu = np.array(fit.predict(C))
   sigma = np.repeat(np.std(X - mu), len(C))
@@ -62,18 +62,21 @@ def cpt_p_pearson(c, yhat, y, mcmc_steps=50, random_state=None, num_perm=1000, d
   # fully confounder test    H0: X ⟂ Y|C
   # partical confounder test H0: C ⟂ Ŷ|Y
   x, y, c = c, yhat, y
-  cond_log_like_mat = conditional_log_likelihood(X=x, C=c, xdtype=dtype)
-  Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(len(x), dtype=int), random_state)
 
+  # 1. density estimation
+  cond_log_like_mat = conditional_log_likelihood(X=x, C=c, xdtype=dtype)
+
+  # 2. permutation sampling
+  Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(len(x), dtype=int), random_state)
   def workhorse(_random_state):
     # batched os job_batch for efficient parallelization
     Pi = generate_X_CPT_MC(mcmc_steps, cond_log_like_mat, Pi_init, random_state=_random_state)
     return x[Pi]
-
   rng = np.random.default_rng(random_state)
   random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
-
   x_perm = np.array(Parallel(n_jobs=-1)(delayed(workhorse)(i) for i in random_states))
+
+  # 3. p-value calculation
   # compute t_xy which is just Pearson correlation in this case but is replaced with a
   # different metric in the neural networks loss function
   t_x_y    = np.corrcoef(x, y)[0,1] ** 2
