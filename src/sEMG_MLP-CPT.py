@@ -46,8 +46,8 @@ class CrossEntropyLoss(nn.Module):
     super().__init__()
 
   def __call__(self, yhat_c, y):
-    print(yhat_c)
-    print(y)
+    # print(yhat_c)
+    # print(y)
     yhat, _ = yhat_c
     return F.cross_entropy(yhat, y)
 
@@ -112,10 +112,14 @@ def pvalue_dcor(preds_confound, targets):
 
 def pvalue_pearson(preds_confound, targets):
   preds, confound = preds_confound
-  # print(preds.argmax(dim=1), confound, targets)
-  p, _ = cpt_p_pearson(confound.numpy(), preds.argmax(dim=1).numpy(), targets.numpy(), random_state=123, num_perm=1000, dtype='categorical')
-  # print(p)
-  return p
+  # p, _ = cpt_p_pearson(confound.numpy(), preds.argmax(dim=1).numpy(), targets.numpy(), random_state=123, num_perm=1000, dtype='categorical')
+  # return p
+  ret = partial_confound_test(targets.numpy(), preds.argmax(dim=1).numpy(), confound.numpy(),
+                              cat_y=True, cat_yhat=True, cat_c=False,
+                              cond_dist_method='gam',
+                              progress=False)
+  print(ret.p)
+  return ret.p
 
 # environment variable for the experiment
 WANDB = os.getenv("WANDB", False)
@@ -153,28 +157,30 @@ if __name__ == "__main__":
     X_Train, Y_Train, C_Train, X_Test, Y_Test, C_Test = partition(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
     # convert labels from [-1, 1] to [0, 1] so the probability density function estimation will be consistent with the dataset transformation
     Y_Train = np.where(Y_Train == -1, 0, 1)
-    Y_Test  = np.where(Y_Test == -1, 0, 1)
+    Y_Test  = np.where(Y_Test  == -1, 0, 1)
 
     # Setting "stratify" to True ensures that the relative class frequencies are approximately preserved in each train and validation fold.
     splits = get_splits(Y_Train, valid_size=.1, stratify=True, random_state=123, shuffle=True, show_plot=False)
 
     dsets_train = sEMGDataset(X_Train[splits[0],:], Y_Train[splits[0]], C_Train[splits[0]])
-    dsets_valid = sEMGDataset(X_Train[splits[1],:], Y_Train[splits[1]], C_Train[splits[1]])
+    # dsets_valid = sEMGDataset(X_Train[splits[1],:], Y_Train[splits[1]], C_Train[splits[1]])
+    dsets_valid = sEMGDataset(X_Train[splits[0],:], Y_Train[splits[0]], C_Train[splits[0]])
     dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test)
 
     dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=True, bs=128, num_workers=2, pin_memory=True)
 
     # This model is pre-defined in https://timeseriesai.github.io/tsai/models.mlp.html
     model = MLPC(c_in=1, c_out=2, seq_len=48, layers=[50, 50, 50], use_bn=True)
-    print(model)
+    # print(model)
 
-    learn = Learner(dls, model, loss_func=CrossEntropyCPTLoss(), metrics=[accuracy, pvalue_dcor, pvalue_pearson], cbs=cbs)
+    # learn = Learner(dls, model, loss_func=CrossEntropyCPTLoss(), metrics=[accuracy, pvalue_dcor, pvalue_pearson], cbs=cbs)
+    learn = Learner(dls, model, loss_func=CrossEntropyLoss(), metrics=[accuracy], cbs=cbs)
 
     # Basically apply some tricks to make it converge faster
     # https://docs.fast.ai/callback.schedule.html#learner.lr_find
     # https://docs.fast.ai/callback.schedule.html#learner.fit_one_cycle
     learn.lr_find()
-    learn.fit_one_cycle(1, lr_max=1e-3)
+    learn.fit_one_cycle(20, lr_max=1e-3)
 
     # Training accuracy
     train_output, train_targets = learn.get_preds(dl=dls.train, with_loss=False)
