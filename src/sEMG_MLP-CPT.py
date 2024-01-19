@@ -168,14 +168,12 @@ if __name__ == "__main__":
     # learn = Learner(dls, model, loss_func=CrossEntropyLoss(), metrics=[accuracy], cbs=cbs)
 
     # Basically apply some tricks to make it converge faster
-    # https://docs.fast.ai/callback.schedule.html#learner.lr_find
-    # https://docs.fast.ai/callback.schedule.html#learner.fit_one_cycle
     learn.lr_find()
     learn.fit_one_cycle(20, lr_max=1e-3)
 
     # Training accuracy
     train_output, train_targets = learn.get_preds(dl=dls.train, with_loss=False)
-    train_preds, train_c = train_output
+    train_preds, train_c, _ = train_output
     train_acc[sub_test] = accuracy_score(train_targets, train_preds.argmax(dim=1))
     print(f"Training acc: {train_acc[sub_test]}")
 
@@ -197,7 +195,7 @@ if __name__ == "__main__":
     learn.loss_func = CrossEntropyLoss()
     learn.metrics = accuracy
     test_output, test_targets = learn.get_preds(dl=dls_test, with_loss=False)
-    test_preds, test_c = test_output
+    test_preds, test_c, _ = test_output
     test_acc[sub_test] = accuracy_score(test_targets, test_preds.argmax(dim=1))
     print(f"Testing acc : {test_acc[sub_test]}")
 
