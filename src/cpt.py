@@ -58,13 +58,16 @@ def generate_X_CPT_MC(nstep, log_likelihood_mat, Pi, random_state=None):
   # Pi is a permutations of array indices
   return Pi
 
-def cpt_p_pearson(c, yhat, y, mcmc_steps=50, random_state=None, num_perm=1000, dtype='numerical'):
+def cpt_p_pearson(c, yhat, yt, cond_like_mat=None, mcmc_steps=50, random_state=None, num_perm=1000, dtype='numerical'):
   # fully confounder test    H0: X ⟂ Y|C
   # partical confounder test H0: C ⟂ Ŷ|Y
-  x, y, c = c, yhat, y
+  x, y, c = c, yhat, yt
 
   # 1. density estimation
-  cond_log_like_mat = conditional_log_likelihood(X=x, C=c, xdtype=dtype)
+  if cond_like_mat is None: 
+    cond_log_like_mat = conditional_log_likelihood(X=x, C=c, xdtype=dtype)
+  else:
+    cond_log_like_mat = cond_like_mat
 
   # 2. permutation sampling
   Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(len(x), dtype=int), random_state)
@@ -84,6 +87,8 @@ def cpt_p_pearson(c, yhat, y, mcmc_steps=50, random_state=None, num_perm=1000, d
   y_tile   = np.tile(y, (num_perm,1))
   for i in range(num_perm):
     t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1] ** 2
+  print(t_x_y)
+  print(t_xpi_y)
   p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
   return p, t_xpi_y
 

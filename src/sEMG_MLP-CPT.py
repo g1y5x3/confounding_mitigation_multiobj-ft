@@ -95,12 +95,13 @@ def cpt_p_dcor(c, yhat, y, mcmc_steps=50, random_state=123, num_perm=1000):
 
 # TODO how to make it faster?
 class CrossEntropyCPTLoss(nn.Module):
-  def __init__(self, X, C, xdtype, mcmc_steps=50, random_state=123, num_perm=1000):
+  def __init__(self, cond_like_mat, mcmc_steps=50, random_state=123, num_perm=1000):
     super().__init__()
     self.mcmc_steps        = mcmc_steps   # this is the default value used inside original CPT function
     self.random_state      = random_state
     self.num_perm          = num_perm
-    self.cond_log_like_mat = conditional_log_likelihood(X, C, xdtype)
+    self.cond_log_like_mat = cond_like_mat
+    print(f"cond like mat {self.cond_log_like_mat.shape}")
 
   def __call__(self, yhat_c_idx, y):
     yhat, c, idx = yhat_c_idx
@@ -130,6 +131,7 @@ if __name__ == "__main__":
   FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_datafile("data/subjects_40_v6")
 
   train_acc = np.zeros(40)
+  valid_acc = np.zeros(40)
   test_acc  = np.zeros(40)
   p_value   = np.zeros(40)
   for sub_test in range(0, 1):
@@ -149,25 +151,23 @@ if __name__ == "__main__":
     Y_Test  = np.where(Y_Test  == -1, 0, 1)
 
     # Setting "stratify" to True ensures that the relative class frequencies are approximately preserved in each train and validation fold.
+    cond_like_mat = conditional_log_likelihood(X=C_Train, C=Y_Train, xdtype='categorical')
     splits = get_splits(Y_Train, valid_size=.1, stratify=True, random_state=123, shuffle=True, show_plot=False)
     dsets_train = sEMGDataset(X_Train[splits[0],:], Y_Train[splits[0]], C_Train[splits[0]], splits[0])
     dsets_valid = sEMGDataset(X_Train[splits[1],:], Y_Train[splits[1]], C_Train[splits[1]], splits[1])
+    dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test, list(np.arange(len(X_Test))))
 
-    index = list(np.arange(len(X_Test)))
-    dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test, index)
-
+    # NOTE disable shuffling to utilize the conditional likelihood matrix estimated upfront
     dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=False, bs=256, num_workers=4, pin_memory=True)
 
     # This model is pre-defined in https://timeseriesai.github.io/tsai/models.mlp.html
     model = MLPC(c_in=1, c_out=2, seq_len=48, layers=[50, 50, 50], use_bn=True)
     learn = Learner(dls,
                     model,
-                    loss_func=CrossEntropyCPTLoss(C_Train, Y_Train, xdtype='categorical'),
+                    loss_func=CrossEntropyCPTLoss(cond_like_mat),
                     metrics=[accuracy],
                     cbs=cbs)
-    # learn = Learner(dls, model, loss_func=CrossEntropyLoss(), metrics=[accuracy], cbs=cbs)
 
-    # Basically apply some tricks to make it converge faster
     learn.lr_find()
     learn.fit_one_cycle(20, lr_max=1e-3)
 
@@ -185,13 +185,33 @@ if __name__ == "__main__":
     p_value[sub_test] = ret.p
     print(f"P Value     : {p_value[sub_test]}")
 
+    print(cond_like_mat.shape)
+    print(cond_like_mat[splits[0],:][:,splits[0]].shape)
+    p_value2, _ = cpt_p_pearson(train_c.numpy(), train_preds.argmax(dim=1).numpy(), train_targets.numpy(), cond_like_mat[splits[0],:][:,splits[0]])
+    print(f"P Value 2   : {p_value2}")
+
+    # Validation accuracy
+    valid_output, valid_targets = learn.get_preds(dl=dls.valid, with_loss=False)
+    valid_preds, valid_c, _ = valid_output
+    valid_acc[sub_test] = accuracy_score(valid_targets, valid_preds.argmax(dim=1))
+    print(f"Validation acc: {valid_acc[sub_test]}")
+
+    # P-value
+    ret = partial_confound_test(valid_targets.numpy(), valid_preds.argmax(dim=1).numpy(), valid_c.numpy(),
+                                cat_y=True, cat_yhat=True, cat_c=False,
+                                cond_dist_method='gam',
+                                progress=True)
+    p_value[sub_test] = ret.p
+    print(f"P Value     : {p_value[sub_test]}")
+
+    p_value3, _ = cpt_p_pearson(valid_c.numpy(), valid_preds.argmax(dim=1).numpy(), valid_targets.numpy(), cond_like_mat[splits[1],:][:,splits[1]])
+    print(f"P Value 3   : {p_value3}")
+
     # this is extremely slow, even on the gpu dute to computing the pairwise distance over a 6000+ training data size
     # print(f"P Value (dCor): {cpt_p_dcor(c=train_c, yhat=train_preds, y=train_targets)}")
 
     # Testing accuracy
     dls_test = dls.new(dsets_test)
-    # the loss function is still being called internally during inference probably for some internal tracking in the API,
-    # hence here switch to a different loss function since there's no point calculating the cpt p value
     learn.loss_func = CrossEntropyLoss()
     learn.metrics = accuracy
     test_output, test_targets = learn.get_preds(dl=dls_test, with_loss=False)
