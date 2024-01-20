@@ -11,10 +11,15 @@ from fastai.callback.wandb import WandbCallback
 from tsai.all import get_splits, MLP
 from joblib import Parallel, delayed
 from sklearn.metrics import accuracy_score
-from mlconfound.stats import partial_confound_test
-#
+# from mlconfound.stats import partial_confound_test
+
 from util.sEMGhelpers import load_datafile, partition
 from cpt import conditional_log_likelihood, generate_X_CPT_MC, cpt_p_pearson
+
+# environment variable for the experiment
+WANDB = os.getenv("WANDB", False)
+NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
+GROUP = os.getenv("GROUP", "MLP-sEMG-CPT")
 
 class sEMGDataset(Dataset):
   def __init__(self, X_Train, Y_Train, C_Train=None, index=None):
@@ -101,10 +106,13 @@ class CrossEntropyCPTLoss(nn.Module):
     self.random_state      = random_state
     self.num_perm          = num_perm
     self.cond_log_like_mat = cond_like_mat
-    print(f"cond like mat {self.cond_log_like_mat.shape}")
 
   def __call__(self, yhat_c_idx, y):
     yhat, c, idx = yhat_c_idx
+    # p, _ = cpt_p_pearson(c.numpy(), yhat.argmax(dim=1).numpy(), y.numpy(), self.cond_log_like_mat[idx,:][:,idx], 
+    #                      self.mcmc_steps, self.random_state, self.num_perm)
+    # print(f"p-value {p}")
+    # not sure if this works yet
     # p = cpt_p_dcor(c, yhat, y, self.mcmc_steps, self.random_state, self.num_perm)
     # return F.cross_entropy(yhat, y) - p
     return F.cross_entropy(yhat, y)
@@ -121,11 +129,6 @@ def pvalue_pearson(preds_confound, targets):
   preds, confound = preds_confound
   p, _ = cpt_p_pearson(confound.numpy(), preds.argmax(dim=1).numpy(), targets.numpy(), random_state=123, num_perm=1000, dtype='categorical')
   return p
-
-# environment variable for the experiment
-WANDB = os.getenv("WANDB", False)
-NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
-GROUP = os.getenv("GROUP", "MLP-sEMG-CPT")
 
 if __name__ == "__main__":
   FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_datafile("data/subjects_40_v6")
@@ -158,7 +161,9 @@ if __name__ == "__main__":
     dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test, list(np.arange(len(X_Test))))
 
     # NOTE disable shuffling to utilize the conditional likelihood matrix estimated upfront
-    dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=False, bs=256, num_workers=4, pin_memory=True)
+    bs = 2048
+    print(f"batch size: {bs}")
+    dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=False, bs=bs, num_workers=4, pin_memory=True)
 
     # This model is pre-defined in https://timeseriesai.github.io/tsai/models.mlp.html
     model = MLPC(c_in=1, c_out=2, seq_len=48, layers=[50, 50, 50], use_bn=True)
@@ -169,43 +174,25 @@ if __name__ == "__main__":
                     cbs=cbs)
 
     learn.lr_find()
-    learn.fit_one_cycle(20, lr_max=1e-3)
+    learn.fit_one_cycle(50, lr_max=1e-3)
 
     # Training accuracy
     train_output, train_targets = learn.get_preds(dl=dls.train, with_loss=False)
     train_preds, train_c, _ = train_output
     train_acc[sub_test] = accuracy_score(train_targets, train_preds.argmax(dim=1))
-    print(f"Training acc: {train_acc[sub_test]}")
+    print(f"Training acc   : {train_acc[sub_test]}")
 
-    # P-value
-    ret = partial_confound_test(train_targets.numpy(), train_preds.argmax(dim=1).numpy(), train_c.numpy(),
-                                cat_y=True, cat_yhat=True, cat_c=False,
-                                cond_dist_method='gam',
-                                progress=True)
-    p_value[sub_test] = ret.p
-    print(f"P Value     : {p_value[sub_test]}")
-
-    print(cond_like_mat.shape)
-    print(cond_like_mat[splits[0],:][:,splits[0]].shape)
-    p_value2, _ = cpt_p_pearson(train_c.numpy(), train_preds.argmax(dim=1).numpy(), train_targets.numpy(), cond_like_mat[splits[0],:][:,splits[0]])
-    print(f"P Value 2   : {p_value2}")
+    # P-value (only makes sense to report for training)
+    p, _ = cpt_p_pearson(train_c.numpy(), train_preds.argmax(dim=1).numpy(), train_targets.numpy(), cond_like_mat[splits[0],:][:,splits[0]],
+                                mcmc_steps=100, random_state=None, num_perm=2000, dtype='categorical')
+    p_value[sub_test] = p
+    print(f"P Value        : {p}")
 
     # Validation accuracy
     valid_output, valid_targets = learn.get_preds(dl=dls.valid, with_loss=False)
     valid_preds, valid_c, _ = valid_output
     valid_acc[sub_test] = accuracy_score(valid_targets, valid_preds.argmax(dim=1))
-    print(f"Validation acc: {valid_acc[sub_test]}")
-
-    # P-value
-    ret = partial_confound_test(valid_targets.numpy(), valid_preds.argmax(dim=1).numpy(), valid_c.numpy(),
-                                cat_y=True, cat_yhat=True, cat_c=False,
-                                cond_dist_method='gam',
-                                progress=True)
-    p_value[sub_test] = ret.p
-    print(f"P Value     : {p_value[sub_test]}")
-
-    p_value3, _ = cpt_p_pearson(valid_c.numpy(), valid_preds.argmax(dim=1).numpy(), valid_targets.numpy(), cond_like_mat[splits[1],:][:,splits[1]])
-    print(f"P Value 3   : {p_value3}")
+    print(f"Validation acc : {valid_acc[sub_test]}")
 
     # this is extremely slow, even on the gpu dute to computing the pairwise distance over a 6000+ training data size
     # print(f"P Value (dCor): {cpt_p_dcor(c=train_c, yhat=train_preds, y=train_targets)}")

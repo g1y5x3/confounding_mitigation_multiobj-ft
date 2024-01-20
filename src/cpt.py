@@ -87,8 +87,6 @@ def cpt_p_pearson(c, yhat, yt, cond_like_mat=None, mcmc_steps=50, random_state=N
   y_tile   = np.tile(y, (num_perm,1))
   for i in range(num_perm):
     t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1] ** 2
-  print(t_x_y)
-  print(t_xpi_y)
   p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
   return p, t_xpi_y
 
