@@ -109,6 +109,9 @@ class CrossEntropyCPTLoss(nn.Module):
 
   def __call__(self, yhat_c_idx, y):
     yhat, c, idx = yhat_c_idx
+    print(c.shape)
+    print(yhat.argmax(dim=1).shape)
+    print(y.shape)
     # p, _ = cpt_p_pearson(c.numpy(), yhat.argmax(dim=1).numpy(), y.numpy(), self.cond_log_like_mat[idx,:][:,idx], 
     #                      self.mcmc_steps, self.random_state, self.num_perm)
     # print(f"p-value {p}")
@@ -161,7 +164,7 @@ if __name__ == "__main__":
     dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test, list(np.arange(len(X_Test))))
 
     # NOTE disable shuffling to utilize the conditional likelihood matrix estimated upfront
-    bs = 2048
+    bs = 1024
     print(f"batch size: {bs}")
     dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=False, bs=bs, num_workers=4, pin_memory=True)
 

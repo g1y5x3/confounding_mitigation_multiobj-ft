@@ -4,6 +4,7 @@ code: https://github.com/pni-lab/mlconfound/blob/master/mlconfound/stats.py
 paper: Tamas Spisak, Statistical quantification of confounding bias in machine learning models, GigaScience, Volume 11, 2022, giac082
 link: https://doi.org/10.1093/gigascience/giac082
 """
+import torch
 import numpy as np
 import pandas as pd
 from pygam import LinearGAM
@@ -46,7 +47,7 @@ def generate_X_CPT_MC(nstep, log_likelihood_mat, Pi, random_state=None):
   n = len(Pi)
   npair = np.floor(n / 2).astype(int)
   rng = np.random.default_rng(random_state)
-  for istep in range(nstep):
+  for _ in range(nstep):
     perm = rng.choice(n, n, replace=False)
     inds_i = perm[0:npair]
     inds_j = perm[npair:(2 * npair)]
@@ -90,6 +91,33 @@ def cpt_p_pearson(c, yhat, yt, cond_like_mat=None, mcmc_steps=50, random_state=N
   p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
   return p, t_xpi_y
 
+def cpt_p_pearson_torch(x, y, cond_log_like_mat, mcmc_steps=50, num_perm=1000, random_state=None, dtype='numerical'):
+  # fully confounder test (notation referred to in this implementation) - H0: X ⟂ Y|C
+  # partical confounder test                                            - H0: C ⟂ Ŷ|Y
+  # x, y - c, yhat
+
+  # 1. density estimation is done ahead of time to then conert to torch tensors 
+
+  # 2. permutation sampling. can be done without torch, all that matters was generated permutation is converted to torch
+  Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(len(x), dtype=int), random_state)
+  def workhorse(_random_state):
+    Pi = generate_X_CPT_MC(mcmc_steps, cond_log_like_mat, Pi_init, random_state=_random_state)
+    return x[Pi]
+  rng = np.random.default_rng(random_state)
+  random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
+  x_perm = np.array(Parallel(n_jobs=-1)(delayed(workhorse)(i) for i in random_states))
+
+  # 3. p-value calculation
+  # compute t_xy which is just Pearson correlation in this case but is replaced with a
+  # different metric in the neural networks loss function
+  t_x_y    = np.corrcoef(x, y)[0,1] ** 2
+  t_xpi_y = np.zeros(num_perm)
+  y_tile   = np.tile(y, (num_perm,1))
+  for i in range(num_perm):
+    t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1] ** 2
+  p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
+  return p, t_xpi_y
+
 def verify_implementation(random_state, num_perm, H1_y, H1_c, H1_yhat):
   # original function
   ret = partial_confound_test(H1_y, H1_yhat, H1_c, num_perms=num_perm, return_null_dist=True, random_state=random_state, n_jobs=-1)
@@ -110,13 +138,30 @@ def verify_implementation(random_state, num_perm, H1_y, H1_c, H1_yhat):
   assert np.allclose(ret.p, p), "p-value does not match with original implementation"
   assert np.allclose(ret.null_distribution, t_xpi_y), "null distribution does not match with original implementation"
 
+def verify_np_vs_torch(random_state, num_perm, H1_y, H1_c, H1_yhat):
+  # original function
+  ret = partial_confound_test(H1_y, H1_yhat, H1_c, num_perms=num_perm, return_null_dist=True, random_state=random_state, n_jobs=-1)
+  print(pd.DataFrame({'p' : [ret.p],
+                      'ci lower' : [ret.p_ci[0]],
+                      'ci upper' : [ret.p_ci[1]],
+                      'R2(y,c)' : [ret.r2_y_c],
+                      'R2(y,y^)' : [ret.r2_y_yhat],
+                      'Expected R2(y^,c)': [np.round(ret.expected_r2_yhat_c, 3)],
+                      'R2(y^,c)' : [ret.r2_yhat_c]}))
+
 if __name__ == "__main__":
   # exampled from https://github.com/pni-lab/mlconfound/blob/master/notebooks/quickstart.ipynb used to verify
   H1_y, H1_c, H1_yhat = simulate_y_c_yhat(w_yc=0.5, w_yyhat=0.5, w_cyhat=0.1, n=1000, random_state=42)
 
-  verify_implementation(num_perm=25,   random_state=25,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  verify_implementation(num_perm=50,   random_state=5,   H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  verify_implementation(num_perm=100,  random_state=30,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  verify_implementation(num_perm=250,  random_state=2,   H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  verify_implementation(num_perm=500,  random_state=130, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  verify_implementation(num_perm=1000, random_state=421, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  # verify the original implementation vs. the simplified numpy implementation
+  # verify_implementation(num_perm=25,   random_state=25,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  # verify_implementation(num_perm=50,   random_state=5,   H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  # verify_implementation(num_perm=100,  random_state=30,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  # verify_implementation(num_perm=250,  random_state=2,   H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  # verify_implementation(num_perm=500,  random_state=130, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  # verify_implementation(num_perm=1000, random_state=421, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+
+  # verify the numpy implementation vs. the torch implementation
+  cond_like_mat = conditional_log_likelihood(X=H1_c, C=H1_y, xdtype='numerical')
+  print(cond_like_mat)
+  print(cond_like_mat.shape)
