@@ -4,7 +4,9 @@ code: https://github.com/pni-lab/mlconfound/blob/master/mlconfound/stats.py
 paper: Tamas Spisak, Statistical quantification of confounding bias in machine learning models, GigaScience, Volume 11, 2022, giac082
 link: https://doi.org/10.1093/gigascience/giac082
 """
+import time
 import torch
+import cupy as cp
 import numpy as np
 import pandas as pd
 from pygam import LinearGAM
@@ -83,21 +85,21 @@ def cpt_p_pearson(c, yhat, yt, cond_like_mat=None, mcmc_steps=50, random_state=N
   # 3. p-value calculation
   # compute t_xy which is just Pearson correlation in this case but is replaced with a
   # different metric in the neural networks loss function
-  t_x_y    = np.corrcoef(x, y)[0,1] ** 2
+  t_x_y   = np.corrcoef(x, y)[0,1]
   t_xpi_y = np.zeros(num_perm)
-  y_tile   = np.tile(y, (num_perm,1))
+  y_tile  = np.tile(y, (num_perm,1))
   for i in range(num_perm):
-    t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1] ** 2
+    t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1]
   p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
   return p, t_xpi_y
 
+
 def cpt_p_pearson_torch(x, y, cond_log_like_mat, mcmc_steps=50, num_perm=1000, random_state=None, dtype='numerical'):
-  # fully confounder test (notation referred to in this implementation) - H0: X ⟂ Y|C
-  # partical confounder test                                            - H0: C ⟂ Ŷ|Y
-  # x, y - c, yhat
+  # both x and y has to be torch tensor due to gradient computation, cond_log_like_mat can be provided as a numpy array
 
   # 1. density estimation is done ahead of time to then conert to torch tensors 
 
+  # TODO: this is the slowest part of the algorithm and it doesn't scale really well
   # 2. permutation sampling. can be done without torch, all that matters was generated permutation is converted to torch
   Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(len(x), dtype=int), random_state)
   def workhorse(_random_state):
@@ -106,17 +108,25 @@ def cpt_p_pearson_torch(x, y, cond_log_like_mat, mcmc_steps=50, num_perm=1000, r
   rng = np.random.default_rng(random_state)
   random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
   x_perm = np.array(Parallel(n_jobs=-1)(delayed(workhorse)(i) for i in random_states))
+  x_perm = torch.tensor(x_perm)
 
   # 3. p-value calculation
   # compute t_xy which is just Pearson correlation in this case but is replaced with a
   # different metric in the neural networks loss function
-  t_x_y    = np.corrcoef(x, y)[0,1] ** 2
-  t_xpi_y = np.zeros(num_perm)
-  y_tile   = np.tile(y, (num_perm,1))
-  for i in range(num_perm):
-    t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1] ** 2
-  p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
-  return p, t_xpi_y
+  t_x_y   = torch.corrcoef(torch.stack((x,y), dim=0))[0,1]
+  m_xpi_y = torch.concatenate((y.reshape((1,-1)), x_perm), axis=0)
+  t_xpi_y = torch.corrcoef(m_xpi_y)[0,1:]
+  print(f"x {x}")
+  print(f"y {y}")
+  print(f"x_perm {x_perm}")
+  print(f"t_x_y {t_x_y}")
+  print(f"t_xpi_y {t_xpi_y}")
+
+  # this is the real p-value but we cannot derive gradient from so instead we
+  # are using an approximation
+  # p = torch.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
+  p = (t_xpi_y - t_x_y)[t_xpi_y >= t_x_y].sigmoid().sum()/len(t_xpi_y)
+  return p
 
 def verify_implementation(random_state, num_perm, H1_y, H1_c, H1_yhat):
   # original function
@@ -136,7 +146,7 @@ def verify_implementation(random_state, num_perm, H1_y, H1_c, H1_yhat):
   print(f"simplified implementation p-value: {p}")
 
   assert np.allclose(ret.p, p), "p-value does not match with original implementation"
-  assert np.allclose(ret.null_distribution, t_xpi_y), "null distribution does not match with original implementation"
+  # assert np.allclose(ret.null_distribution, t_xpi_y), "null distribution does not match with original implementation"
 
 def verify_np_vs_torch(random_state, num_perm, H1_y, H1_c, H1_yhat):
   # original function
@@ -154,6 +164,7 @@ if __name__ == "__main__":
   H1_y, H1_c, H1_yhat = simulate_y_c_yhat(w_yc=0.5, w_yyhat=0.5, w_cyhat=0.1, n=1000, random_state=42)
 
   # verify the original implementation vs. the simplified numpy implementation
+  print("1. compare with the original implementation")
   # verify_implementation(num_perm=25,   random_state=25,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
   # verify_implementation(num_perm=50,   random_state=5,   H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
   # verify_implementation(num_perm=100,  random_state=30,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
@@ -161,7 +172,23 @@ if __name__ == "__main__":
   # verify_implementation(num_perm=500,  random_state=130, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
   # verify_implementation(num_perm=1000, random_state=421, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
 
+  print("2. compare with re-implementation in torch")
   # verify the numpy implementation vs. the torch implementation
   cond_like_mat = conditional_log_likelihood(X=H1_c, C=H1_y, xdtype='numerical')
-  print(cond_like_mat)
-  print(cond_like_mat.shape)
+
+  p, _ = cpt_p_pearson(c=H1_c, yhat=H1_yhat, yt=H1_y, cond_like_mat=cond_like_mat, random_state=42)
+  print(f"p-value: {p}")
+
+  print(f"H1_yhat {H1_yhat.shape}")
+  x = torch.tensor(H1_yhat).float()
+  print(f"x {x.shape}")
+  w = torch.eye(1000, requires_grad=True)
+  print(f"w {w.shape}")
+  print(f"w.grad {w.grad}")
+  yhat = w @ x
+  print(f"yhat {yhat}")
+  # p = cpt_p_pearson_torch(torch.tensor(H1_c), torch.tensor(H1_yhat, requires_grad=True), cond_like_mat, random_state=42)
+  p = cpt_p_pearson_torch(torch.tensor(H1_c), yhat, cond_like_mat, random_state=42)
+  print(f"p-value torch: {p}")
+  p.backward()
+  print(f"w.grad {w.grad}")
