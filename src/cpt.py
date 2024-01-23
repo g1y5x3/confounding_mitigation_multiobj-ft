@@ -6,7 +6,6 @@ link: https://doi.org/10.1093/gigascience/giac082
 """
 import time
 import torch
-import cupy as cp
 import numpy as np
 import pandas as pd
 from pygam import LinearGAM
@@ -108,19 +107,15 @@ def cpt_p_pearson_torch(x, y, cond_log_like_mat, mcmc_steps=50, num_perm=1000, r
   rng = np.random.default_rng(random_state)
   random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
   x_perm = np.array(Parallel(n_jobs=-1)(delayed(workhorse)(i) for i in random_states))
-  x_perm = torch.tensor(x_perm)
 
   # 3. p-value calculation
   # compute t_xy which is just Pearson correlation in this case but is replaced with a
   # different metric in the neural networks loss function
+  x       = torch.tensor(x)
+  x_perm  = torch.tensor(x_perm)
   t_x_y   = torch.corrcoef(torch.stack((x,y), dim=0))[0,1]
   m_xpi_y = torch.concatenate((y.reshape((1,-1)), x_perm), axis=0)
   t_xpi_y = torch.corrcoef(m_xpi_y)[0,1:]
-  print(f"x {x}")
-  print(f"y {y}")
-  print(f"x_perm {x_perm}")
-  print(f"t_x_y {t_x_y}")
-  print(f"t_xpi_y {t_xpi_y}")
 
   # this is the real p-value but we cannot derive gradient from so instead we
   # are using an approximation
@@ -165,30 +160,24 @@ if __name__ == "__main__":
 
   # verify the original implementation vs. the simplified numpy implementation
   print("1. compare with the original implementation")
-  # verify_implementation(num_perm=25,   random_state=25,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  # verify_implementation(num_perm=50,   random_state=5,   H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  # verify_implementation(num_perm=100,  random_state=30,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  # verify_implementation(num_perm=250,  random_state=2,   H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  # verify_implementation(num_perm=500,  random_state=130, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
-  # verify_implementation(num_perm=1000, random_state=421, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  verify_implementation(num_perm=25,   random_state=25,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  verify_implementation(num_perm=50,   random_state=5,   H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  verify_implementation(num_perm=100,  random_state=30,  H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  verify_implementation(num_perm=250,  random_state=2,   H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  verify_implementation(num_perm=500,  random_state=130, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
+  verify_implementation(num_perm=1000, random_state=421, H1_y=H1_y, H1_c=H1_c, H1_yhat=H1_yhat)
 
-  print("2. compare with re-implementation in torch")
   # verify the numpy implementation vs. the torch implementation
+  print("2. compare with re-implementation in torch")
   cond_like_mat = conditional_log_likelihood(X=H1_c, C=H1_y, xdtype='numerical')
 
   p, _ = cpt_p_pearson(c=H1_c, yhat=H1_yhat, yt=H1_y, cond_like_mat=cond_like_mat, random_state=42)
   print(f"p-value: {p}")
 
-  print(f"H1_yhat {H1_yhat.shape}")
   x = torch.tensor(H1_yhat).float()
-  print(f"x {x.shape}")
   w = torch.eye(1000, requires_grad=True)
-  print(f"w {w.shape}")
-  print(f"w.grad {w.grad}")
   yhat = w @ x
-  print(f"yhat {yhat}")
-  # p = cpt_p_pearson_torch(torch.tensor(H1_c), torch.tensor(H1_yhat, requires_grad=True), cond_like_mat, random_state=42)
-  p = cpt_p_pearson_torch(torch.tensor(H1_c), yhat, cond_like_mat, random_state=42)
+  p = cpt_p_pearson_torch(H1_c, yhat, cond_like_mat, random_state=42)
   print(f"p-value torch: {p}")
   p.backward()
   print(f"w.grad {w.grad}")
