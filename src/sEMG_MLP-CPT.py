@@ -1,7 +1,8 @@
 import os
 import wandb
-import numpy as np
 import torch
+import argparse
+import numpy as np
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import Dataset
@@ -109,15 +110,6 @@ class CrossEntropyCPTLoss(nn.Module):
 
   def __call__(self, yhat_c_idx, y):
     yhat, c, idx = yhat_c_idx
-    print(c.shape)
-    print(yhat.argmax(dim=1).shape)
-    print(y.shape)
-    # p, _ = cpt_p_pearson(c.numpy(), yhat.argmax(dim=1).numpy(), y.numpy(), self.cond_log_like_mat[idx,:][:,idx], 
-    #                      self.mcmc_steps, self.random_state, self.num_perm)
-    # print(f"p-value {p}")
-    # not sure if this works yet
-    # p = cpt_p_dcor(c, yhat, y, self.mcmc_steps, self.random_state, self.num_perm)
-    # return F.cross_entropy(yhat, y) - p
     return F.cross_entropy(yhat, y)
 
 def accuracy(preds_confound_index, targets):
@@ -134,13 +126,18 @@ def pvalue_pearson(preds_confound, targets):
   return p
 
 if __name__ == "__main__":
+  parser = argparse.ArgumentParser(description="sEMG MLP CPT experiments")
+  parser.add_argument('-bs', type=int, default=256, help="batch size")
+  parser.add_argument('-nw', type=int, default=2,   help="number of workers")
+  args = parser.parse_args()
+
   FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_datafile("data/subjects_40_v6")
 
   train_acc = np.zeros(40)
   valid_acc = np.zeros(40)
   test_acc  = np.zeros(40)
   p_value   = np.zeros(40)
-  for sub_test in range(0, 1):
+  for sub_test in range(1, 40):
     sub_txt = "R%03d"%(int(SUBJECT_ID[sub_test][0][0]))
     sub_group = "Fatigued" if int(VFI_1[sub_test][0][0][0]) > 10 else "Healthy"
     print('\n===No.%d: %s===\n'%(sub_test+1, sub_txt))
@@ -164,9 +161,9 @@ if __name__ == "__main__":
     dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test, list(np.arange(len(X_Test))))
 
     # NOTE disable shuffling to utilize the conditional likelihood matrix estimated upfront
-    bs = 1024
-    print(f"batch size: {bs}")
-    dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=False, bs=bs, num_workers=4, pin_memory=True)
+    print(f"batch size: {args.bs}")
+    print(f"# of workers: {args.nw}")
+    dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=False, bs=args.bs, num_workers=args.nw, pin_memory=True)
 
     # This model is pre-defined in https://timeseriesai.github.io/tsai/models.mlp.html
     model = MLPC(c_in=1, c_out=2, seq_len=48, layers=[50, 50, 50], use_bn=True)
@@ -196,9 +193,6 @@ if __name__ == "__main__":
     valid_preds, valid_c, _ = valid_output
     valid_acc[sub_test] = accuracy_score(valid_targets, valid_preds.argmax(dim=1))
     print(f"Validation acc : {valid_acc[sub_test]}")
-
-    # this is extremely slow, even on the gpu dute to computing the pairwise distance over a 6000+ training data size
-    # print(f"P Value (dCor): {cpt_p_dcor(c=train_c, yhat=train_preds, y=train_targets)}")
 
     # Testing accuracy
     dls_test = dls.new(dsets_test)
