@@ -4,9 +4,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from fastai.learner import Learner
-from fastai.data.core import DataLoaders
+# from fastai.data.core import DataLoaders
 from fastai.callback.wandb import WandbCallback
 from tsai.all import get_splits, MLP
 from sklearn.metrics import accuracy_score
