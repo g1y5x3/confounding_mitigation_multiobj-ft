@@ -9,12 +9,9 @@ from fastai.learner import Learner
 from fastai.data.core import DataLoaders
 from fastai.callback.wandb import WandbCallback
 from tsai.all import get_splits, MLP
-from joblib import Parallel, delayed
 from sklearn.metrics import accuracy_score
-# from mlconfound.stats import partial_confound_test
-
 from util.sEMGhelpers import load_datafile, partition
-from cpt import conditional_log_likelihood, generate_X_CPT_MC, cpt_p_pearson
+from cpt import conditional_log_likelihood, cpt_p_pearson, cpt_p_pearson_torch
 
 # environment variable for the experiment
 WANDB = os.getenv("WANDB", False)
@@ -22,20 +19,22 @@ NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
 GROUP = os.getenv("GROUP", "MLP-sEMG-CPT")
 
 class sEMGDataset(Dataset):
-  def __init__(self, X_Train, Y_Train, C_Train=None, index=None):
-    self.X_Train = X_Train
-    self.Y_Train = Y_Train
-    self.C_Train = C_Train
-    self.index   = index
+  def __init__(self, X, Y, C, index, sid, train=False):
+    self.X = X
+    self.Y = Y
+    self.C = C
+    self.i = index
+    self.sid = sid
+    self.train = train
 
   def __len__(self):
-    return len(self.Y_Train)
+    return len(self.Y)
 
   def __getitem__(self, idx):
-    x   = torch.tensor(self.X_Train[idx,:], dtype=torch.float32)
-    c   = torch.tensor(self.C_Train[idx],   dtype=torch.float32)
-    i   = torch.tensor(self.index[idx],     dtype=torch.int)
-    y   = torch.tensor(self.Y_Train[idx],   dtype=torch.long)
+    x = torch.tensor(self.X[idx,:], dtype=torch.float32)
+    c = torch.tensor(self.C[idx],   dtype=torch.float32)
+    i = torch.tensor(self.i[idx],   dtype=torch.int)
+    y = torch.tensor(self.Y[idx],   dtype=torch.long)
     return (x, c, i), y
 
 # model is the same but passing an additional input variable
@@ -56,49 +55,6 @@ class CrossEntropyLoss(nn.Module):
     yhat, _, _ = yhat_c_idx
     return F.cross_entropy(yhat, y)
 
-# TODO vectorize this implementation
-# https://github.com/zhenxingjian/Partial_Distance_Correlation/blob/b088801996acefe38a67dff59bb8cbe3b20c7d91/Partial_Distance_Correlation.ipynb
-def distance_correlation(c, y):
-  matrix_a = torch.sqrt(torch.sum(torch.square(c.unsqueeze(0) - c.unsqueeze(1)), dim = -1) + 1e-12)
-  matrix_b = torch.sqrt(torch.sum(torch.square(y.unsqueeze(0) - y.unsqueeze(1)), dim = -1) + 1e-12)
-
-  matrix_A = matrix_a - torch.mean(matrix_a, dim = 0, keepdims= True) - torch.mean(matrix_a, dim = 1, keepdims= True) + torch.mean(matrix_a)
-  matrix_B = matrix_b - torch.mean(matrix_b, dim = 0, keepdims= True) - torch.mean(matrix_b, dim = 1, keepdims= True) + torch.mean(matrix_b)
-
-  gamma_XY = torch.sum(matrix_A * matrix_B)/ (matrix_A.shape[0] * matrix_A.shape[1])
-  gamma_XX = torch.sum(matrix_A * matrix_A)/ (matrix_A.shape[0] * matrix_A.shape[1])
-  gamma_YY = torch.sum(matrix_B * matrix_B)/ (matrix_A.shape[0] * matrix_A.shape[1])
-
-  correlation_r = gamma_XY/torch.sqrt(gamma_XX * gamma_YY + 1e-9)
-  return correlation_r
-
-def cpt_p_dcor(c, yhat, y, mcmc_steps=50, random_state=123, num_perm=1000):
-  # sampling permutations of c
-  bs = y.shape[0]
-  print(bs)
-  cond_log_like_mat = conditional_log_likelihood(X=c.numpy(), C=y.numpy(), xdtype='categorical')
-  print(cond_log_like_mat.shape)
-  Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(bs, dtype=int), random_state)
-  print(Pi_init.shape)
-
-  def workhorse(c, _random_state):
-    # batched os job_batch for efficient parallelization
-    Pi = generate_X_CPT_MC(mcmc_steps, cond_log_like_mat, Pi_init, random_state=_random_state)
-    return c[Pi]
-  rng = np.random.default_rng(random_state)
-  random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
-  print(Pi_init.shape)
-  c_pi_np = np.array(Parallel(n_jobs=-1)(delayed(workhorse)(c, i) for i in random_states))
-  c_pi = torch.tensor(c_pi_np, dtype=torch.float32)
-  # compute p-value
-  t_yhat_c = distance_correlation(yhat.reshape([bs, -1]), c.reshape([bs, -1])).repeat(num_perm)
-  t_yhat_cpi = torch.zeros(num_perm)
-  for i in range(num_perm):
-    t_yhat_cpi[i] = distance_correlation(yhat.reshape([bs, -1]), c_pi[i,:].reshape([bs, -1]))
-
-  return torch.sigmoid(t_yhat_cpi - t_yhat_c).mean()
-
-# TODO how to make it faster?
 class CrossEntropyCPTLoss(nn.Module):
   def __init__(self, cond_like_mat, mcmc_steps=50, random_state=123, num_perm=1000):
     super().__init__()
@@ -109,29 +65,18 @@ class CrossEntropyCPTLoss(nn.Module):
 
   def __call__(self, yhat_c_idx, y):
     yhat, c, idx = yhat_c_idx
-    print(c.shape)
-    print(yhat.argmax(dim=1).shape)
-    print(y.shape)
-    # p, _ = cpt_p_pearson(c.numpy(), yhat.argmax(dim=1).numpy(), y.numpy(), self.cond_log_like_mat[idx,:][:,idx], 
-    #                      self.mcmc_steps, self.random_state, self.num_perm)
-    # print(f"p-value {p}")
-    # not sure if this works yet
-    # p = cpt_p_dcor(c, yhat, y, self.mcmc_steps, self.random_state, self.num_perm)
-    # return F.cross_entropy(yhat, y) - p
-    return F.cross_entropy(yhat, y)
+    p = cpt_p_pearson_torch(c.numpy(), yhat.argmax(dim=1), self.cond_log_like_mat[idx,:][:,idx], self.mcmc_steps, self.random_state, self.num_perm)
+    l = F.cross_entropy(yhat, y)
+    print(f"cross entropy {l}")
+    print(f"p-value {p}")
+
+    return l
 
 def accuracy(preds_confound_index, targets):
   preds, _, _ = preds_confound_index
   return (preds.argmax(dim=-1) == targets).float().mean()
 
-def pvalue_dcor(preds_confound, targets):
-  preds, confound = preds_confound
-  return cpt_p_dcor(confound, preds, targets)
 
-def pvalue_pearson(preds_confound, targets):
-  preds, confound = preds_confound
-  p, _ = cpt_p_pearson(confound.numpy(), preds.argmax(dim=1).numpy(), targets.numpy(), random_state=123, num_perm=1000, dtype='categorical')
-  return p
 
 if __name__ == "__main__":
   FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_datafile("data/subjects_40_v6")
@@ -152,16 +97,16 @@ if __name__ == "__main__":
       cbs = WandbCallback(log_preds=False)
 
     print("Loading training and testing set")
-    X_Train, Y_Train, C_Train, X_Test, Y_Test, C_Test = partition(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
+    X_Train, Y_Train, C_Train, ID_Train, X_Test, Y_Test, C_Test, ID_Test = partition(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test, SUBJECT_ID)
     Y_Train = np.where(Y_Train == -1, 0, 1)
     Y_Test  = np.where(Y_Test  == -1, 0, 1)
 
     # Setting "stratify" to True ensures that the relative class frequencies are approximately preserved in each train and validation fold.
     cond_like_mat = conditional_log_likelihood(X=C_Train, C=Y_Train, xdtype='categorical')
     splits = get_splits(Y_Train, valid_size=.1, stratify=True, random_state=123, shuffle=True, show_plot=False)
-    dsets_train = sEMGDataset(X_Train[splits[0],:], Y_Train[splits[0]], C_Train[splits[0]], splits[0])
-    dsets_valid = sEMGDataset(X_Train[splits[1],:], Y_Train[splits[1]], C_Train[splits[1]], splits[1])
-    dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test, list(np.arange(len(X_Test))))
+    dsets_train = sEMGDataset(X_Train[splits[0],:], Y_Train[splits[0]], C_Train[splits[0]], splits[0], ID_Train[splits[0]])
+    dsets_valid = sEMGDataset(X_Train[splits[1],:], Y_Train[splits[1]], C_Train[splits[1]], splits[1], ID_Train[splits[1]])
+    dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test, list(np.arange(len(X_Test))), ID_Test)
 
     # NOTE disable shuffling to utilize the conditional likelihood matrix estimated upfront
     bs = 1024
@@ -177,7 +122,7 @@ if __name__ == "__main__":
                     cbs=cbs)
 
     learn.lr_find()
-    learn.fit_one_cycle(50, lr_max=1e-3)
+    learn.fit_one_cycle(5, lr_max=1e-3)
 
     # Training accuracy
     train_output, train_targets = learn.get_preds(dl=dls.train, with_loss=False)
@@ -196,9 +141,6 @@ if __name__ == "__main__":
     valid_preds, valid_c, _ = valid_output
     valid_acc[sub_test] = accuracy_score(valid_targets, valid_preds.argmax(dim=1))
     print(f"Validation acc : {valid_acc[sub_test]}")
-
-    # this is extremely slow, even on the gpu dute to computing the pairwise distance over a 6000+ training data size
-    # print(f"P Value (dCor): {cpt_p_dcor(c=train_c, yhat=train_preds, y=train_targets)}")
 
     # Testing accuracy
     dls_test = dls.new(dsets_test)

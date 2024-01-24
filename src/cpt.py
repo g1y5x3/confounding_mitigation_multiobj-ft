@@ -123,6 +123,48 @@ def cpt_p_pearson_torch(x, y, cond_log_like_mat, mcmc_steps=50, num_perm=1000, r
   p = (t_xpi_y - t_x_y)[t_xpi_y >= t_x_y].sigmoid().sum()/len(t_xpi_y)
   return p
 
+# TODO vectorize this implementation
+# https://github.com/zhenxingjian/Partial_Distance_Correlation/blob/b088801996acefe38a67dff59bb8cbe3b20c7d91/Partial_Distance_Correlation.ipynb
+def distance_correlation(c, y):
+  matrix_a = torch.sqrt(torch.sum(torch.square(c.unsqueeze(0) - c.unsqueeze(1)), dim = -1) + 1e-12)
+  matrix_b = torch.sqrt(torch.sum(torch.square(y.unsqueeze(0) - y.unsqueeze(1)), dim = -1) + 1e-12)
+
+  matrix_A = matrix_a - torch.mean(matrix_a, dim = 0, keepdims= True) - torch.mean(matrix_a, dim = 1, keepdims= True) + torch.mean(matrix_a)
+  matrix_B = matrix_b - torch.mean(matrix_b, dim = 0, keepdims= True) - torch.mean(matrix_b, dim = 1, keepdims= True) + torch.mean(matrix_b)
+
+  gamma_XY = torch.sum(matrix_A * matrix_B)/ (matrix_A.shape[0] * matrix_A.shape[1])
+  gamma_XX = torch.sum(matrix_A * matrix_A)/ (matrix_A.shape[0] * matrix_A.shape[1])
+  gamma_YY = torch.sum(matrix_B * matrix_B)/ (matrix_A.shape[0] * matrix_A.shape[1])
+
+  correlation_r = gamma_XY/torch.sqrt(gamma_XX * gamma_YY + 1e-9)
+  return correlation_r
+
+def cpt_p_dcor(c, yhat, y, mcmc_steps=50, random_state=123, num_perm=1000):
+  # sampling permutations of c
+  bs = y.shape[0]
+  print(bs)
+  cond_log_like_mat = conditional_log_likelihood(X=c.numpy(), C=y.numpy(), xdtype='categorical')
+  print(cond_log_like_mat.shape)
+  Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(bs, dtype=int), random_state)
+  print(Pi_init.shape)
+
+  def workhorse(c, _random_state):
+    # batched os job_batch for efficient parallelization
+    Pi = generate_X_CPT_MC(mcmc_steps, cond_log_like_mat, Pi_init, random_state=_random_state)
+    return c[Pi]
+  rng = np.random.default_rng(random_state)
+  random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
+  print(Pi_init.shape)
+  c_pi_np = np.array(Parallel(n_jobs=-1)(delayed(workhorse)(c, i) for i in random_states))
+  c_pi = torch.tensor(c_pi_np, dtype=torch.float32)
+  # compute p-value
+  t_yhat_c = distance_correlation(yhat.reshape([bs, -1]), c.reshape([bs, -1])).repeat(num_perm)
+  t_yhat_cpi = torch.zeros(num_perm)
+  for i in range(num_perm):
+    t_yhat_cpi[i] = distance_correlation(yhat.reshape([bs, -1]), c_pi[i,:].reshape([bs, -1]))
+
+  return torch.sigmoid(t_yhat_cpi - t_yhat_c).mean()
+
 def verify_implementation(random_state, num_perm, H1_y, H1_c, H1_yhat):
   # original function
   ret = partial_confound_test(H1_y, H1_yhat, H1_c, num_perms=num_perm, return_null_dist=True, random_state=random_state, n_jobs=-1)
