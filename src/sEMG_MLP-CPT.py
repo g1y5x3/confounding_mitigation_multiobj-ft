@@ -4,9 +4,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Sampler, Dataset
 from fastai.learner import Learner
-# from fastai.data.core import DataLoaders
+from fastai.data.core import DataLoader, DataLoaders
 from fastai.callback.wandb import WandbCallback
 from tsai.all import get_splits, MLP
 from sklearn.metrics import accuracy_score
@@ -17,6 +17,16 @@ from cpt import conditional_log_likelihood, cpt_p_pearson, cpt_p_pearson_torch
 WANDB = os.getenv("WANDB", False)
 NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
 GROUP = os.getenv("GROUP", "MLP-sEMG-CPT")
+
+class sEMGSampler(Sampler):
+  def __init__(self, sids):
+    self.sids = sids
+
+  def __len__(self):
+    return len(self.sids)
+
+  def __iter__(self):
+    return iter((0)*len(self.sids))
 
 class sEMGDataset(Dataset):
   def __init__(self, X, Y, C, index, sid, train=False):
@@ -31,6 +41,7 @@ class sEMGDataset(Dataset):
     return len(self.Y)
 
   def __getitem__(self, idx):
+    print(idx)
     x = torch.tensor(self.X[idx,:], dtype=torch.float32)
     c = torch.tensor(self.C[idx],   dtype=torch.float32)
     i = torch.tensor(self.i[idx],   dtype=torch.int)
@@ -108,19 +119,22 @@ if __name__ == "__main__":
     dsets_valid = sEMGDataset(X_Train[splits[1],:], Y_Train[splits[1]], C_Train[splits[1]], splits[1], ID_Train[splits[1]])
     dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test, list(np.arange(len(X_Test))), ID_Test)
 
-    # NOTE disable shuffling to utilize the conditional likelihood matrix estimated upfront
-    bs = 1024
+    train_sampler = sEMGSampler(ID_Train[splits[0]])
+
+    bs = 256
     print(f"batch size: {bs}")
-    dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=False, bs=bs, num_workers=4, pin_memory=True)
+    train_dl = DataLoader(dsets_train, batch_size=bs, sampler=train_sampler, num_workers=1, pin_memory=True)
+    valid_dl = DataLoader(dsets_valid, batch_size=bs, shuffle=False, num_workers=4, pin_memory=True)
+    test_dl  = DataLoader(dsets_test, batch_size=bs, shuffle=False, num_workers=4, pin_memory=True)
+    dls = DataLoaders(train_dl, valid_dl)
+
+    # dls = DataLoaders.from_dsets(dsets_train, dsets_valid, shuffle=False, bs=bs, sampler = train_sampler, num_workers=4, pin_memory=True)
 
     # This model is pre-defined in https://timeseriesai.github.io/tsai/models.mlp.html
     model = MLPC(c_in=1, c_out=2, seq_len=48, layers=[50, 50, 50], use_bn=True)
-    learn = Learner(dls,
-                    model,
-                    loss_func=CrossEntropyCPTLoss(cond_like_mat),
-                    metrics=[accuracy],
-                    cbs=cbs)
+    learn = Learner(dls, model, loss_func=CrossEntropyCPTLoss(cond_like_mat), metrics=[accuracy], cbs=cbs)
 
+    # main training loop is abstracted
     learn.lr_find()
     learn.fit_one_cycle(5, lr_max=1e-3)
 
