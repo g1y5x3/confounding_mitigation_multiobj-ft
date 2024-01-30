@@ -3,6 +3,7 @@ import wandb
 import numpy as np
 import torch
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 from torch import nn
 from torch.utils.data import Dataset
 from fastai.callback.wandb import WandbCallback
@@ -51,7 +52,6 @@ class sEMGDataset(Dataset):
     # TODO
     # when idx is 0 reset self.idx
     if self.train:
-      # print(self.sid[self.idx[idx]])
       x = torch.tensor(self.X[self.idx[idx],:], dtype=torch.float32)
       c = torch.tensor(self.C[self.idx[idx]],   dtype=torch.float32)
       i = torch.tensor(self.i[self.idx[idx]],   dtype=torch.int)
@@ -86,22 +86,21 @@ flag_lr_find = 1
 p_log = []
 l_log = []
 class CrossEntropyCPTLoss(nn.Module):
-  def __init__(self, cond_like_mat, mcmc_steps=50, random_state=123, num_perm=1000):
+  def __init__(self, cond_like_mat, train_idx, mcmc_steps=50, random_state=123, num_perm=1000):
     super().__init__()
     self.mcmc_steps        = mcmc_steps   # this is the default value used inside original CPT function
     self.random_state      = random_state
     self.num_perm          = num_perm
     self.cond_log_like_mat = cond_like_mat
+    self.train_idx         = train_idx
 
   def __call__(self, yhat_c_idx, y):
     yhat, c, idx = yhat_c_idx
     p = cpt_p_pearson_torch(c.numpy(), yhat.argmax(dim=1), self.cond_log_like_mat[idx,:][:,idx], self.mcmc_steps, self.random_state, self.num_perm)
     l = F.cross_entropy(yhat, y)
-    if flag_lr_find == 0:
-      print(f"p-value: {p}")
-      print(f"cross entroy: {l}")
-      p_log.append(p)
-      l_log.append(l)
+    if flag_lr_find == 0 and np.all(np.isin(idx.numpy(), self.train_idx)) :
+      p_log.append(p.detach().numpy())
+      l_log.append(l.detach().numpy())
     return l+(1-p)
 
 def accuracy(preds_confound_index, targets):
@@ -153,13 +152,27 @@ if __name__ == "__main__":
     dls = DataLoaders(dl_train, dl_valid)
 
     model = MLP_CPT(c_in=1, c_out=2, seq_len=48, layers=[50, 50, 50], use_bn=True)
-    learn = Learner(dls, model, loss_func=CrossEntropyCPTLoss(cond_like_mat), metrics=[accuracy], cbs=cbs)
+    learn = Learner(dls, model, loss_func=CrossEntropyCPTLoss(cond_like_mat, splits[0]), metrics=[accuracy], cbs=cbs)
 
     flag_lr_find = 1
     learn.lr_find()
     print("lr find done!")
     flag_lr_find = 0
     learn.fit_one_cycle(50, lr_max=1e-3)
+
+    plt.figure()
+    plt.plot(np.arange(len(l_log)), l_log, label="cross entropy")
+    plt.plot(np.arange(len(p_log)), p_log, label="p-value")
+    plt.xlabel("steps")
+    plt.title(f"batch size = {bs} ({100*bs/len(splits[0]):.2}% of training data)")
+    plt.legend()
+    if WANDB:
+      # wandb.log({"loss vs. p-value": wandb.Image(plt)})
+      # wandb.run.step = 0
+      for i in range(len(l_log)):
+        wandb.log({"loss/i"            : i,
+                   "loss/cross_entropy": l_log[i],
+                   "loss/p_value"      : p_log[i]})
 
     # Training accuracy
     train_output, train_targets = learn.get_preds(dl=dls.train, with_loss=False)
