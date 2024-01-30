@@ -30,9 +30,7 @@ class sEMGDataset(Dataset):
         i_subject = [i for i, idx in enumerate(self.i) if self.sid[i] == s]
         i_per_subject.append(i_subject)
 
-      # lengths = [len(sublist) for sublist in i_per_subject]
-      # print(lengths)
-
+      # TODO add a shuffling step
       samples_per_subject = bs // len(np.unique(self.sid))
       extra_samples = bs % len(np.unique(self.sid))
       self.idx = []
@@ -53,7 +51,7 @@ class sEMGDataset(Dataset):
     # TODO
     # when idx is 0 reset self.idx
     if self.train:
-      print(self.idx[idx])
+      # print(self.sid[self.idx[idx]])
       x = torch.tensor(self.X[self.idx[idx],:], dtype=torch.float32)
       c = torch.tensor(self.C[self.idx[idx]],   dtype=torch.float32)
       i = torch.tensor(self.i[self.idx[idx]],   dtype=torch.int)
@@ -84,6 +82,9 @@ class CrossEntropyLoss(nn.Module):
     yhat, _, _ = yhat_c_idx
     return F.cross_entropy(yhat, y)
 
+flag_lr_find = 1
+p_log = []
+l_log = []
 class CrossEntropyCPTLoss(nn.Module):
   def __init__(self, cond_like_mat, mcmc_steps=50, random_state=123, num_perm=1000):
     super().__init__()
@@ -96,8 +97,12 @@ class CrossEntropyCPTLoss(nn.Module):
     yhat, c, idx = yhat_c_idx
     p = cpt_p_pearson_torch(c.numpy(), yhat.argmax(dim=1), self.cond_log_like_mat[idx,:][:,idx], self.mcmc_steps, self.random_state, self.num_perm)
     l = F.cross_entropy(yhat, y)
-
-    return l
+    if flag_lr_find == 0:
+      print(f"p-value: {p}")
+      print(f"cross entroy: {l}")
+      p_log.append(p)
+      l_log.append(l)
+    return l+(1-p)
 
 def accuracy(preds_confound_index, targets):
   preds, _, _ = preds_confound_index
@@ -150,7 +155,10 @@ if __name__ == "__main__":
     model = MLP_CPT(c_in=1, c_out=2, seq_len=48, layers=[50, 50, 50], use_bn=True)
     learn = Learner(dls, model, loss_func=CrossEntropyCPTLoss(cond_like_mat), metrics=[accuracy], cbs=cbs)
 
+    flag_lr_find = 1
     learn.lr_find()
+    print("lr find done!")
+    flag_lr_find = 0
     learn.fit_one_cycle(50, lr_max=1e-3)
 
     # Training accuracy
