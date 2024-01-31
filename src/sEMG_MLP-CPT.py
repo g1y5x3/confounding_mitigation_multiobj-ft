@@ -101,7 +101,7 @@ class CrossEntropyCPTLoss(nn.Module):
     if flag_lr_find == 0 and np.all(np.isin(idx.numpy(), self.train_idx)) :
       p_log.append(p.detach().numpy())
       l_log.append(l.detach().numpy())
-    return l+(1-p)
+    return 1-p
 
 def accuracy(preds_confound_index, targets):
   preds, _, _ = preds_confound_index
@@ -135,7 +135,7 @@ if __name__ == "__main__":
     Y_Train = np.where(Y_Train == -1, 0, 1)
     Y_Test  = np.where(Y_Test  == -1, 0, 1)
 
-    bs = 256
+    bs = 2048
     print(f"batch size: {bs}")
 
     # initialization for CPT
@@ -202,6 +202,6 @@ if __name__ == "__main__":
     print(f"Testing acc : {test_acc[sub_test]}")
 
     if WANDB: wandb.log({"subject_info/vfi_1"    : int(VFI_1[sub_test][0][0]),
-                         "metrics/train_acc_opt" : train_acc[sub_test],
-                         "metrics/test_acc_opt"  : test_acc[sub_test],
-                         "metrics/p_value_opt"   : p_value[sub_test]})
+                         "metrics/train_acc_cpt" : train_acc[sub_test],
+                         "metrics/test_acc_cpt"  : test_acc[sub_test],
+                         "metrics/p_value_cpt"   : p_value[sub_test]})
