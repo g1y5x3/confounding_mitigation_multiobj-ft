@@ -96,7 +96,9 @@ class CrossEntropyCPTLoss(nn.Module):
 
   def __call__(self, yhat_c_idx, y):
     yhat, c, idx = yhat_c_idx
-    p = cpt_p_pearson_torch(c.numpy(), yhat.argmax(dim=1), self.cond_log_like_mat[idx,:][:,idx], self.mcmc_steps, self.random_state, self.num_perm)
+    p = cpt_p_pearson_torch(c.numpy(), yhat.argmax(dim=1),
+                            self.cond_log_like_mat[idx,:][:,idx],
+                            mcmc_steps=self.mcmc_steps, random_state=self.random_state, num_perm=self.num_perm, dtype='categorical')
     l = F.cross_entropy(yhat, y)
     if flag_lr_find == 0 and np.all(np.isin(idx.numpy(), self.train_idx)) :
       p_log.append(p.detach().numpy())
@@ -119,7 +121,7 @@ if __name__ == "__main__":
   test_acc  = np.zeros(40)
   p_value   = np.zeros(40)
 
-  for sub_test in range(0, 1):
+  for sub_test in range(11, 12):
     sub_txt = "R%03d"%(int(SUBJECT_ID[sub_test][0][0]))
     sub_group = "Fatigued" if int(VFI_1[sub_test][0][0][0]) > 10 else "Healthy"
     print('\n===No.%d: %s===\n'%(sub_test+1, sub_txt))
@@ -135,7 +137,7 @@ if __name__ == "__main__":
     Y_Train = np.where(Y_Train == -1, 0, 1)
     Y_Test  = np.where(Y_Test  == -1, 0, 1)
 
-    bs = 2048
+    bs = 512
     print(f"batch size: {bs}")
 
     # initialization for CPT
@@ -182,7 +184,7 @@ if __name__ == "__main__":
 
     # P-value (only makes sense to report for training)
     p, _ = cpt_p_pearson(train_c.numpy(), train_preds.argmax(dim=1).numpy(), train_targets.numpy(), cond_like_mat[splits[0],:][:,splits[0]],
-                                mcmc_steps=100, random_state=None, num_perm=2000, dtype='categorical')
+                                mcmc_steps=100, random_state=None, num_perm=1000, dtype='categorical')
     p_value[sub_test] = p
     print(f"P Value        : {p}")
 
