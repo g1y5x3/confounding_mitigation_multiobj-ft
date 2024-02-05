@@ -111,11 +111,8 @@ def cpt_p_pearson_torch(x, y, cond_log_like_mat, mcmc_steps=50, num_perm=1000, r
   # 3. p-value calculation
   # compute t_xy which is just Pearson correlation in this case but is replaced with a
   # different metric in the neural networks loss function
-  # print(y.shape)
-  x       = torch.tensor(x)
-  # print(x.shape)
-  x_perm  = torch.tensor(x_perm)
-  # print(x_perm.shape)
+  x       = torch.tensor(x, requires_grad=True)
+  x_perm  = torch.tensor(x_perm, requires_grad=True)
   t_x_y   = torch.corrcoef(torch.stack((x,y), dim=0))[0,1]
   m_xpi_y = torch.concatenate((y.reshape((1,-1)), x_perm), axis=0)
   t_xpi_y = torch.corrcoef(m_xpi_y)[0,1:]

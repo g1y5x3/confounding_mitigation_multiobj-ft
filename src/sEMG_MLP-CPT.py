@@ -103,7 +103,7 @@ class CrossEntropyCPTLoss(nn.Module):
     if flag_lr_find == 0 and np.all(np.isin(idx.numpy(), self.train_idx)) :
       p_log.append(p.detach().numpy())
       l_log.append(l.detach().numpy())
-    return 1-p
+    return (1-p)
 
 def accuracy(preds_confound_index, targets):
   preds, _, _ = preds_confound_index
