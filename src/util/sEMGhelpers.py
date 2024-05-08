@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.io as sio
 
-def partition(FEAT, LABEL, SUBJECT_SKINFOLD, sub_test, SUBJECT_ID=None):
+def partition_features(FEAT, LABEL, SUBJECT_SKINFOLD, sub_test, SUBJECT_ID=None):
   # Load testing samples
   X_Test = FEAT[sub_test,0]
   Y_Test = LABEL[sub_test,0].flatten()
@@ -38,7 +38,7 @@ def partition(FEAT, LABEL, SUBJECT_SKINFOLD, sub_test, SUBJECT_ID=None):
     return X_Train, Y_Train, C_Train, X_Test, Y_Test, C_Test
 
 # mainly just for the sake of not keeping the copy of DATA_ALL
-def load_datafile(file):
+def load_features(file):
   DATA_ALL = sio.loadmat(file)
   FEAT_N           = DATA_ALL['FEAT_N']            # Normalized features
   LABEL            = DATA_ALL['LABEL']             # Labels
@@ -46,3 +46,12 @@ def load_datafile(file):
   SUBJECT_ID       = DATA_ALL['SUBJECT_ID']        # Sujbect ID
   SUBJECT_SKINFOLD = DATA_ALL['SUBJECT_SKINFOLD']  # Subject Skinfold Thickness
   return FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID
+
+def load_raw_signals(file):
+  data = sio.loadmat(file)
+  signals = data['DATA']
+  labels = data['LABEL']
+  VFI1 = data['SUBJECT_VFI']       # VFI-1 Score
+  sub_id = data['SUBJECT_ID']        # Sujbect ID
+  sub_skinfold = data['SUBJECT_SKINFOLD']  # Subject Skinfold Thickness
+  return signals, labels, VFI1, sub_id, sub_skinfold

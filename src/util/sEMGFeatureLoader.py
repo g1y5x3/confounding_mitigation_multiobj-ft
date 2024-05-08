@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import scipy.io as sio
 from torch.utils.data import Dataset
 
 class sEMGFeatureDataset(Dataset):
@@ -25,3 +26,20 @@ class sEMGFeatureDataset(Dataset):
     sample = {'feature': feature, "label": label}
     
     return sample
+
+class sEMGSignalDataset(Dataset):
+  def __init__(self, signals, labels):
+    self.signals = signals
+    self.labels = labels
+
+  def __len__(self):
+    return len(self.labels)
+
+  def __getitem__(self, idx):
+    signal = torch.tensor(self.signals[idx,:,:], dtype=torch.float32)
+    label = torch.tensor(self.labels[idx,:], dtype=torch.float32)
+    return signal, label
+
+if __name__ == "__main__":
+  data_all = sio.loadmat("data/subjects_40_v6.mat")
+  print(data_all)
