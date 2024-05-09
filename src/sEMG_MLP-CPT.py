@@ -12,18 +12,21 @@ from fastai.learner import Learner
 from tsai.all import get_splits, MLP
 from sklearn.metrics import accuracy_score
 from util.sEMGhelpers import load_datafile, partition
-from cpt import conditional_log_likelihood, cpt_p_pearson_torch, cpt_p_pearson
+from cpt import conditional_log_likelihood, generate_X_CPT_MC, cpt_p_pearson_torch, cpt_p_pearson
 
 # environment variable for the experiment
 WANDB = os.getenv("WANDB", False)
 NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
 GROUP = os.getenv("GROUP", "MLP-sEMG-CPT")
 
+C_perm = []
 class sEMGDataset(Dataset):
-  def __init__(self, X, Y, C, index, train=False, sid=None, bs=None):
+  def __init__(self, X, Y, C,
+               index, train=False, sid=None, bs=None, cond_like_mat=None):
     self.X, self.Y, self.C, self.i = X, Y, C, index
-    self.sid, self.train = sid, train
+    self.sid, self.train, self.bs = sid, train, bs
 
+    # can cache all the process here to save times
     if self.train:
       num_batches = len(self.sid) // bs
       i_per_subject = []
@@ -34,6 +37,7 @@ class sEMGDataset(Dataset):
       # TODO add a shuffling step
       samples_per_subject = bs // len(np.unique(self.sid))
       extra_samples = bs % len(np.unique(self.sid))
+      # cache if possible
       self.idx = []
       b = 0
       for b in range(num_batches+1):
@@ -44,23 +48,43 @@ class sEMGDataset(Dataset):
             self.idx.extend(indices[num_samples*b:num_samples*(b+1)])
           else:
             self.idx.extend(indices[num_samples*(b-(len(indices)//num_samples)):num_samples*(b+1-(len(indices)//num_samples))])
+      print(self.idx)
+      print(len(self.idx))
+
+      # pre-sameple Cs, cache if possible
+      from joblib import Parallel, delayed
+      mcmc_steps=50
+      num_perm=1000
+      for b in range(num_batches+1):
+        id = self.idx[b*512:(b+1)*512]
+        print(id)
+        Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_like_mat[id,:][:,id], np.arange(512, dtype=int), 123)
+        def workhorse(_random_state, C):
+          Pi = generate_X_CPT_MC(mcmc_steps, cond_like_mat, Pi_init, random_state=_random_state)
+          return C[Pi]
+        rng = np.random.default_rng(123)
+        random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
+        x_perm = np.array(Parallel(n_jobs=-1)(delayed(workhorse)(i, self.C[id]) for i in random_states))
+        C_perm.append(torch.tensor(x_perm, requires_grad=True))
+      print(C_perm)
 
   def __len__(self):
     return len(self.Y)
 
   def __getitem__(self, idx):
     # TODO
-    # when idx is 0 reset self.idx
     if self.train:
       x = torch.tensor(self.X[self.idx[idx],:], dtype=torch.float32)
       c = torch.tensor(self.C[self.idx[idx]],   dtype=torch.float32)
-      i = torch.tensor(self.i[self.idx[idx]],   dtype=torch.int)
       y = torch.tensor(self.Y[self.idx[idx]],   dtype=torch.long)
+      # indicate which batch it is
+      i = torch.tensor(idx // self.bs,   dtype=torch.int)
     else:
       x = torch.tensor(self.X[idx,:], dtype=torch.float32)
       c = torch.tensor(self.C[idx],   dtype=torch.float32)
-      i = torch.tensor(self.i[idx],   dtype=torch.int)
       y = torch.tensor(self.Y[idx],   dtype=torch.long)
+      # TODO: fix this
+      i = torch.tensor(self.i[idx],   dtype=torch.int)
     return (x, c, i), y
 
 # model is the same but passing an additional input variable
@@ -96,20 +120,31 @@ class CrossEntropyCPTLoss(nn.Module):
 
   def __call__(self, yhat_c_idx, y):
     yhat, c, idx = yhat_c_idx
-    p = cpt_p_pearson_torch(c.numpy(), yhat.argmax(dim=1),
-                            self.cond_log_like_mat[idx,:][:,idx],
-                            mcmc_steps=self.mcmc_steps, random_state=self.random_state, num_perm=self.num_perm, dtype='categorical')
+    print(len(C_perm))
+    print(C_perm[0].shape)
+    print((y.reshape((1,-1))).shape)
+    print(idx)
+    print(idx[0])
+    # p = cpt_p_pearson_torch(c.numpy(), yhat.argmax(dim=1),
+    #                         self.cond_log_like_mat[idx,:][:,idx],
+    #                         mcmc_steps=self.mcmc_steps, random_state=self.random_state, num_perm=self.num_perm, dtype='categorical')
+    t_x_y   = torch.corrcoef(torch.stack((c,y), dim=0))[0,1]
+    m_xpi_y = torch.concatenate((y.reshape((1,-1)), C_perm[idx[0]]), axis=0)
+    t_xpi_y = torch.corrcoef(m_xpi_y)[0,1:]
+
+    # this is the real p-value but we cannot derive gradient from so instead we
+    # are using an approximation
+    p = (t_xpi_y - t_x_y)[t_xpi_y >= t_x_y].sigmoid().sum()/len(t_xpi_y)
+
     l = F.cross_entropy(yhat, y)
     if flag_lr_find == 0 and np.all(np.isin(idx.numpy(), self.train_idx)) :
       p_log.append(p.detach().numpy())
       l_log.append(l.detach().numpy())
-    return (1-p)
+    return l
 
 def accuracy(preds_confound_index, targets):
   preds, _, _ = preds_confound_index
   return (preds.argmax(dim=-1) == targets).float().mean()
-
-
 
 if __name__ == "__main__":
   # TODO
@@ -143,9 +178,12 @@ if __name__ == "__main__":
     # initialization for CPT
     cond_like_mat = conditional_log_likelihood(X=C_Train, C=Y_Train, xdtype='categorical')
 
+    # create the C_Train permutations based on batches
+
     # Setting "stratify" to True ensures that the relative class frequencies are approximately preserved in each train and validation fold
     splits = get_splits(Y_Train, valid_size=.1, stratify=True, random_state=123, shuffle=True, show_plot=False)
-    dsets_train = sEMGDataset(X_Train[splits[0],:], Y_Train[splits[0]], C_Train[splits[0]], splits[0], train=True, sid=ID_Train[splits[0]], bs=bs)
+    dsets_train = sEMGDataset(X_Train[splits[0],:], Y_Train[splits[0]], C_Train[splits[0]], splits[0],
+                              train=True, sid=ID_Train[splits[0]], bs=bs, cond_like_mat=cond_like_mat)
     dsets_valid = sEMGDataset(X_Train[splits[1],:], Y_Train[splits[1]], C_Train[splits[1]], splits[1])
     dsets_test  = sEMGDataset(X_Test, Y_Test, C_Test, list(np.arange(len(X_Test))))
 
@@ -160,50 +198,50 @@ if __name__ == "__main__":
     learn.lr_find()
     print("lr find done!")
     flag_lr_find = 0
-    learn.fit_one_cycle(50, lr_max=1e-3)
+    learn.fit_one_cycle(2, lr_max=1e-3)
 
-    plt.figure()
-    plt.plot(np.arange(len(l_log)), l_log, label="cross entropy")
-    plt.plot(np.arange(len(p_log)), p_log, label="p-value")
-    plt.xlabel("steps")
-    plt.title(f"batch size = {bs} ({100*bs/len(splits[0]):.2}% of training data)")
-    plt.legend()
-    if WANDB:
-      # wandb.log({"loss vs. p-value": wandb.Image(plt)})
-      # wandb.run.step = 0
-      for i in range(len(l_log)):
-        wandb.log({"loss/i"            : i,
-                   "loss/cross_entropy": l_log[i],
-                   "loss/p_value"      : p_log[i]})
+    #plt.figure()
+    #plt.plot(np.arange(len(l_log)), l_log, label="cross entropy")
+    #plt.plot(np.arange(len(p_log)), p_log, label="p-value")
+    #plt.xlabel("steps")
+    #plt.title(f"batch size = {bs} ({100*bs/len(splits[0]):.2}% of training data)")
+    #plt.legend()
+    #if WANDB:
+    #  # wandb.log({"loss vs. p-value": wandb.Image(plt)})
+    #  # wandb.run.step = 0
+    #  for i in range(len(l_log)):
+    #    wandb.log({"loss/i"            : i,
+    #               "loss/cross_entropy": l_log[i],
+    #               "loss/p_value"      : p_log[i]})
 
-    # Training accuracy
-    train_output, train_targets = learn.get_preds(dl=dls.train, with_loss=False)
-    train_preds, train_c, _ = train_output
-    train_acc[sub_test] = accuracy_score(train_targets, train_preds.argmax(dim=1))
-    print(f"Training acc   : {train_acc[sub_test]}")
+    ## Training accuracy
+    #train_output, train_targets = learn.get_preds(dl=dls.train, with_loss=False)
+    #train_preds, train_c, _ = train_output
+    #train_acc[sub_test] = accuracy_score(train_targets, train_preds.argmax(dim=1))
+    #print(f"Training acc   : {train_acc[sub_test]}")
 
-    # P-value (only makes sense to report for training)
-    p, _ = cpt_p_pearson(train_c.numpy(), train_preds.argmax(dim=1).numpy(), train_targets.numpy(), cond_like_mat[splits[0],:][:,splits[0]],
-                                mcmc_steps=100, random_state=None, num_perm=1000, dtype='categorical')
-    p_value[sub_test] = p
-    print(f"P Value        : {p}")
+    ## P-value (only makes sense to report for training)
+    #p, _ = cpt_p_pearson(train_c.numpy(), train_preds.argmax(dim=1).numpy(), train_targets.numpy(), cond_like_mat[splits[0],:][:,splits[0]],
+    #                            mcmc_steps=100, random_state=None, num_perm=1000, dtype='categorical')
+    #p_value[sub_test] = p
+    #print(f"P Value        : {p}")
 
-    # Validation accuracy
-    valid_output, valid_targets = learn.get_preds(dl=dls.valid, with_loss=False)
-    valid_preds, valid_c, _ = valid_output
-    valid_acc[sub_test] = accuracy_score(valid_targets, valid_preds.argmax(dim=1))
-    print(f"Validation acc : {valid_acc[sub_test]}")
+    ## Validation accuracy
+    #valid_output, valid_targets = learn.get_preds(dl=dls.valid, with_loss=False)
+    #valid_preds, valid_c, _ = valid_output
+    #valid_acc[sub_test] = accuracy_score(valid_targets, valid_preds.argmax(dim=1))
+    #print(f"Validation acc : {valid_acc[sub_test]}")
 
-    # Testing accuracy
-    dls_test = dls.new(dsets_test)
-    learn.loss_func = CrossEntropyLoss()
-    learn.metrics = accuracy
-    test_output, test_targets = learn.get_preds(dl=dls_test, with_loss=False)
-    test_preds, test_c, _ = test_output
-    test_acc[sub_test] = accuracy_score(test_targets, test_preds.argmax(dim=1))
-    print(f"Testing acc : {test_acc[sub_test]}")
+    ## Testing accuracy
+    #dls_test = dls.new(dsets_test)
+    #learn.loss_func = CrossEntropyLoss()
+    #learn.metrics = accuracy
+    #test_output, test_targets = learn.get_preds(dl=dls_test, with_loss=False)
+    #test_preds, test_c, _ = test_output
+    #test_acc[sub_test] = accuracy_score(test_targets, test_preds.argmax(dim=1))
+    #print(f"Testing acc : {test_acc[sub_test]}")
 
-    if WANDB: wandb.log({"subject_info/vfi_1"    : int(VFI_1[sub_test][0][0]),
-                         "metrics/train_acc_cpt" : train_acc[sub_test],
-                         "metrics/test_acc_cpt"  : test_acc[sub_test],
-                         "metrics/p_value_cpt"   : p_value[sub_test]})
+    #if WANDB: wandb.log({"subject_info/vfi_1"    : int(VFI_1[sub_test][0][0]),
+    #                     "metrics/train_acc_cpt" : train_acc[sub_test],
+    #                     "metrics/test_acc_cpt"  : test_acc[sub_test],
+    #                     "metrics/p_value_cpt"   : p_value[sub_test]})

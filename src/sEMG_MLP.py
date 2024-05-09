@@ -6,7 +6,7 @@ from fastai.callback.wandb import *
 from fastai.layers import *
 from sklearn.metrics import accuracy_score
 from mlconfound.stats import partial_confound_test
-from util.sEMGhelpers import load_datafile, partition
+from util.sEMGhelpers import load_features, partition
 
 # environment variable for the experiment
 WANDB = os.getenv("WANDB", False)
@@ -21,7 +21,7 @@ if __name__ == "__main__":
   # X - FEAT_N
   # Y - LABEL
   # C - SUBJECT_SKINFOLD
-  FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_datafile("data/subjects_40_v6")
+  FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_features("data/subjects_40_v6")
 
   # NOTE
   # For the neural networks implementation, a high-level API was used in order to minimize

@@ -19,6 +19,9 @@ class simpleEMGtransformer(nn.Module):
     self.fc = nn.Linear(d_model, 2)
 
   def forward(self, x):
+    """
+    input tensor: [bsz, L, C]
+    """
     x = self.input_project(x)
     x = self.encoder(x)
     x = x.permute(0,2,1)
@@ -28,17 +31,12 @@ class simpleEMGtransformer(nn.Module):
     return output
 
 if __name__ == "__main__":
-
   # signal pre-processing
   signals, labels, VFI1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
 
   X, Y = [], []
   for i in range(40):
-    # normalize the signal subject-wise
     x = np.stack(signals[i], axis=2)
-    x_means = np.mean(x, axis=(0,1))
-    x_stds = np.std(x, axis=(0,1))
-    x_norm = (x - x_means[np.newaxis, np.newaxis, :]) / x_stds[np.newaxis, np.newaxis, :]
 
     # one-hot encode the binary labels
     N = labels[i][0].shape[0]
@@ -46,12 +44,19 @@ if __name__ == "__main__":
     y_onehot = np.zeros((N, 2))
     y_onehot[np.arange(N), mapped_indices.flatten()] = 1
 
-    X.append(x_norm)
+    X.append(x)
     Y.append(y_onehot)
 
   X, Y = np.concatenate(X, axis=0), np.concatenate(Y, axis=0)
   print(f"X {X.shape}")
   print(f"Y {Y.shape}")
+
+  # normalize X channel-wise
+  X_means = np.mean(X, axis=(0,1))
+  X_stds = np.std(X, axis=(0,1))
+  print(f"X means {X_means}")
+  print(f"X stds {X_stds}")
+  X_norm = (X - X_means[np.newaxis, np.newaxis, :]) / X_stds[np.newaxis, np.newaxis, :]
 
   # shuffle indices
   num_samples = X.shape[0]
@@ -62,7 +67,7 @@ if __name__ == "__main__":
   split_idx = int(num_samples*0.9)
   train_idx, valid_idx = indices[:split_idx], indices[split_idx:]
 
-  X_train, X_valid = X[train_idx], X[valid_idx]
+  X_train, X_valid = X_norm[train_idx], X_norm[valid_idx]
   Y_train, Y_valid = Y[train_idx], Y[valid_idx]
   print(f"X_train {X_train.shape}")
   print(f"Y_train {Y_train.shape}")
@@ -113,6 +118,7 @@ if __name__ == "__main__":
       _, labels    = torch.max(targets, 1)
       correct += (predicted == labels).sum().item()
 
+    writer.add_scalar("loss/valid", loss_valid/len(dataset_train), epoch)
     writer.add_scalar("accuracy/valid", correct / len(dataloader_valid), epoch)
 
   writer.close()
