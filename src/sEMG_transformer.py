@@ -14,7 +14,7 @@ class simpleEMGtransformer(nn.Module):
     super().__init__()
     # maybe have to reduce the seq using conv1d
     self.input_project = nn.Linear(4, d_model)
-    self.encoder = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward)
+    self.encoder = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, norm_first=True)
     self.pool = nn.AdaptiveAvgPool1d(1)
     self.fc = nn.Linear(d_model, 2)
 
@@ -29,9 +29,9 @@ class simpleEMGtransformer(nn.Module):
 
 if __name__ == "__main__":
 
+  # signal pre-processing
   signals, labels, VFI1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
 
-  # Preprocessing
   X, Y = [], []
   for i in range(40):
     # normalize the signal subject-wise
@@ -88,25 +88,29 @@ if __name__ == "__main__":
     model.train()
     for batch, (inputs, targets) in enumerate(dataloader_train):
       optimizer.zero_grad()
-      inputs, targets = inputs.to("cuda"), targets.to("cuda")
 
+      inputs, targets = inputs.to("cuda"), targets.to("cuda")
       outputs = model(inputs)
       loss = criterion(outputs, targets)
+
       loss.backward()
       optimizer.step()
 
       loss_train += loss.item()
 
-    writer.add_scalar("loss/train", loss_train/(len(dataset_train)//bsz), epoch)
+    writer.add_scalar("loss/train", loss_train/len(dataset_train), epoch)
 
     model.eval()
+    loss_valid = 0
     correct = 0
     for inputs, targets in dataloader_valid:
       inputs, targets = inputs.to("cuda"), targets.to("cuda")
-      outputs = F.softmax(model(inputs), dim=1)
-      _, predicted = torch.max(outputs, 1)
-      _, labels    = torch.max(targets, 1)
+      outputs = model(inputs)
 
+      loss = criterion(outputs, targets)
+      loss_valid += loss.item()
+      _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
+      _, labels    = torch.max(targets, 1)
       correct += (predicted == labels).sum().item()
 
     writer.add_scalar("accuracy/valid", correct / len(dataloader_valid), epoch)
