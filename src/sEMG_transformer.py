@@ -9,26 +9,40 @@ from torch.utils.tensorboard import SummaryWriter
 from util.sEMGhelpers import load_raw_signals
 from util.sEMGFeatureLoader import sEMGSignalDataset
 
-class simpleEMGtransformer(nn.Module):
-  def __init__(self, d_model=64, nhead=4, dim_feedforward=512):
+class sEMGtransformer(nn.Module):
+  def __init__(self, patch_size=256, d_model=512, nhead=8, dim_feedforward=2048):
     super().__init__()
-    # maybe have to reduce the seq using conv1d
-    self.input_project = nn.Linear(4, d_model)
-    self.encoder = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, norm_first=True)
-    self.pool = nn.AdaptiveAvgPool1d(1)
-    self.fc = nn.Linear(d_model, 2)
+    self.patch_size = patch_size
+    self.d_model = d_model
+    self.seq_len = 4000 // patch_size
+    self.input_project = nn.Linear(4*self.patch_size, d_model)
+    self.encoder = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
+                                              dropout=0.1, activation=nn.GELU(), batch_first=True, norm_first=True)
+    self.output_project = nn.Linear(d_model, 2)
+
+    # Parameters/Embeddings
+    self.cls_token = nn.Parameter(torch.rand(1, 1, d_model))
+    self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len+1, d_model))
 
   def forward(self, x):
-    """
-    input tensor: [bsz, L, C]
-    """
+    # Convert from signal to patch
+    x = x[:, :, :(x.shape[2] // self.patch_size)*self.patch_size]
+    B, C, L = x.shape
+    x = x.reshape(B, C, L//self.patch_size, self.patch_size)
+    x = x.permute(0, 2, 1, 3)
+    x = x.flatten(2,3)
     x = self.input_project(x)
+
+    # Add class token and positional embedding
+    cls_token = self.cls_token.repeat(B,1,1)
+    x = torch.cat((cls_token, x), dim=1)
+    x = x + self.pos_embedding[:,:(self.seq_len+1)]
+    x = F.dropout(x, p=0.1)
+
+    # Apply transformer
     x = self.encoder(x)
-    x = x.permute(0,2,1)
-    x = self.pool(x)
-    x = x.flatten(start_dim=1)
-    output = self.fc(x)
-    return output
+    x = x.mean(dim=1)
+    return self.output_project(x)
 
 if __name__ == "__main__":
   # signal pre-processing
@@ -36,7 +50,8 @@ if __name__ == "__main__":
 
   X, Y = [], []
   for i in range(40):
-    x = np.stack(signals[i], axis=2)
+    # stack all inputs into [N,C,L] format
+    x = np.stack(signals[i], axis=1)
 
     # one-hot encode the binary labels
     N = labels[i][0].shape[0]
@@ -52,14 +67,14 @@ if __name__ == "__main__":
   print(f"Y {Y.shape}")
 
   # normalize X channel-wise
-  X_means = np.mean(X, axis=(0,1))
-  X_stds = np.std(X, axis=(0,1))
+  X_means = np.mean(X, axis=(0,2))
+  X_stds = np.std(X, axis=(0,2))
   print(f"X means {X_means}")
   print(f"X stds {X_stds}")
-  X_norm = (X - X_means[np.newaxis, np.newaxis, :]) / X_stds[np.newaxis, np.newaxis, :]
+  X_norm = (X - X_means[np.newaxis,:,np.newaxis]) / X_stds[np.newaxis,:,np.newaxis]
 
   # shuffle indices
-  num_samples = X.shape[0]
+  num_samples = X_norm.shape[0]
   indices = np.arange(num_samples)
   np.random.shuffle(indices)
 
@@ -81,15 +96,16 @@ if __name__ == "__main__":
   dataloader_train = DataLoader(dataset_train, batch_size=bsz, shuffle=True)
   dataloader_valid = DataLoader(dataset_valid, batch_size=bsz, shuffle=False)
 
-  model = simpleEMGtransformer()
+  model = sEMGtransformer(patch_size=32, d_model=512, nhead=8, dim_feedforward=2048)
   model.to("cuda")
 
   criterion = nn.CrossEntropyLoss()
   optimizer = torch.optim.AdamW(model.parameters())
 
   writer = SummaryWriter()
-  for epoch in tqdm(range(250), desc="Training Epochs"):
+  for epoch in tqdm(range(750), desc="Training Epochs"):
     loss_train = 0
+    correct_train = 0
     model.train()
     for batch, (inputs, targets) in enumerate(dataloader_train):
       optimizer.zero_grad()
@@ -101,24 +117,28 @@ if __name__ == "__main__":
       loss.backward()
       optimizer.step()
 
+      _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
+      _, labels    = torch.max(targets, 1)
+      correct_train += (predicted == labels).sum().item()
       loss_train += loss.item()
 
     writer.add_scalar("loss/train", loss_train/len(dataset_train), epoch)
+    writer.add_scalar("accuracy/train", correct_train/len(dataset_train), epoch)
 
-    model.eval()
     loss_valid = 0
-    correct = 0
+    correct_valid = 0
+    model.eval()
     for inputs, targets in dataloader_valid:
       inputs, targets = inputs.to("cuda"), targets.to("cuda")
       outputs = model(inputs)
-
       loss = criterion(outputs, targets)
-      loss_valid += loss.item()
+
       _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
       _, labels    = torch.max(targets, 1)
-      correct += (predicted == labels).sum().item()
+      correct_valid += (predicted == labels).sum().item()
+      loss_valid += loss.item()
 
-    writer.add_scalar("loss/valid", loss_valid/len(dataset_train), epoch)
-    writer.add_scalar("accuracy/valid", correct / len(dataloader_valid), epoch)
+    writer.add_scalar("loss/valid", loss_valid/len(dataset_valid), epoch)
+    writer.add_scalar("accuracy/valid", correct_valid/len(dataset_valid), epoch)
 
   writer.close()
