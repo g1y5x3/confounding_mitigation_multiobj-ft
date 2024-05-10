@@ -60,9 +60,9 @@ class sEMGtransformer(nn.Module):
     x = self.dropout(x)
 
     x = self.transformer_encoder(x)
-    
-    # extract only the cls_token
-    x = x[:, 0]
+
+    # compare to using only the cls_token, using mean of embedding has a much smoother loss curve
+    x = x.mean(dim=1)
     x = self.mlp_head(x)
     return x
 
@@ -70,9 +70,12 @@ class sEMGtransformer(nn.Module):
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
   # training config
+  parser.add_argument('-seed', type=int, default=0, help="random seed")
   parser.add_argument('-epochs', type=int, default=1000, help="number of epochs")
   parser.add_argument('-bsz', type=int, default=32, help="batch size")
+  # optimizer config
   parser.add_argument('-lr', type=float, default=0.001, help="learning rate")
+  parser.add_argument('-wd', type=float, default=0.01, help="weight decay")
   # model config
   parser.add_argument('-psz', type=int, default=64, help="signal patch size")
   parser.add_argument('-d_model', type=int, default=512, help="transformer embedding dim")
@@ -83,8 +86,8 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   # to stay sane
-  np.random.seed(0)
-  torch.manual_seed(0)
+  np.random.seed(args.seed)
+  torch.manual_seed(args.seed)
 
   # signal pre-processing
   signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
@@ -118,8 +121,8 @@ if __name__ == "__main__":
   indices = np.arange(num_samples)
   np.random.shuffle(indices)
   split_idx = int(num_samples*0.9)
-
   train_idx, valid_idx = indices[:split_idx], indices[split_idx:]
+
   X_train, X_valid = X_norm[train_idx], X_norm[valid_idx]
   Y_train, Y_valid = Y[train_idx], Y[valid_idx]
   print(f"X_train {X_train.shape}")
@@ -130,19 +133,21 @@ if __name__ == "__main__":
   dataset_train = sEMGSignalDataset(X_train, Y_train)
   dataset_valid = sEMGSignalDataset(X_valid, Y_valid)
 
-  # bsz = 32
   dataloader_train = DataLoader(dataset_train, batch_size=args.bsz, shuffle=True)
   dataloader_valid = DataLoader(dataset_valid, batch_size=args.bsz, shuffle=False)
 
   model = sEMGtransformer(patch_size=args.psz, d_model=args.d_model, nhead=args.nhead, dim_feedforward=args.dim_feedforward, dropout=args.dropout,
                           num_layers=args.num_layers)
   model.to("cuda")
+  # TODO: more tests
+  # model_compiled = torch.compile(model)
 
   criterion = nn.CrossEntropyLoss()
   optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
   scaler = torch.cuda.amp.GradScaler()
 
   writer = SummaryWriter()
+  accuracy_best = 0
   for epoch in tqdm(range(args.epochs), desc="Training"):
     loss_train = 0
     correct_train = 0
@@ -152,6 +157,7 @@ if __name__ == "__main__":
       optimizer.zero_grad()
       with torch.autocast(device_type="cuda", dtype=torch.float16):
         outputs = model(inputs)
+        # outputs = model_compiled(inputs)
         loss = criterion(outputs, targets)
 
       scaler.scale(loss).backward()
@@ -172,6 +178,7 @@ if __name__ == "__main__":
     for inputs, targets in dataloader_valid:
       inputs, targets = inputs.to("cuda"), targets.to("cuda")
       outputs = model(inputs)
+      # outputs = model_compiled(inputs)
       loss = criterion(outputs, targets)
 
       _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
@@ -182,6 +189,9 @@ if __name__ == "__main__":
     writer.add_scalar("loss/valid", loss_valid/len(dataset_valid), epoch)
     writer.add_scalar("accuracy/valid", correct_valid/len(dataset_valid), epoch)
 
+    if correct_valid/len(dataset_valid) > accuracy_best: accuracy_best = correct_valid/len(dataset_valid)
+
+  writer.add_hparams(vars(args), {"accuracy_best": accuracy_best})
   writer.close()
 
-  # Leave-one-out testing
+  # leave-one-out testing
