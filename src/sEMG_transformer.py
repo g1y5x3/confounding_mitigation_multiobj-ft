@@ -11,10 +11,10 @@ def load_raw_signals(file):
   data = sio.loadmat(file)
   signals = data['DATA']
   labels = data['LABEL']
-  VFI1 = data['SUBJECT_VFI']       # VFI-1 Score
-  sub_id = data['SUBJECT_ID']        # Sujbect ID
-  sub_skinfold = data['SUBJECT_SKINFOLD']  # Subject Skinfold Thickness
-  return signals, labels, VFI1, sub_id, sub_skinfold
+  vfi_1 = data['SUBJECT_VFI']
+  sub_id = data['SUBJECT_ID']
+  sub_skinfold = data['SUBJECT_SKINFOLD']
+  return signals, labels, vfi_1, sub_id, sub_skinfold
 
 class sEMGSignalDataset(Dataset):
   def __init__(self, signals, labels):
@@ -71,7 +71,7 @@ if __name__ == "__main__":
   torch.manual_seed(0)
 
   # signal pre-processing
-  signals, labels, VFI1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
+  signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
 
   X, Y = [], []
   for i in range(40):
@@ -127,7 +127,7 @@ if __name__ == "__main__":
   optimizer = torch.optim.AdamW(model.parameters())
 
   writer = SummaryWriter()
-  for epoch in tqdm(range(1000), desc="Training Epochs"):
+  for epoch in tqdm(range(1000), desc="Training"):
     loss_train = 0
     correct_train = 0
     model.train()
