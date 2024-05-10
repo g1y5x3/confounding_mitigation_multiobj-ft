@@ -30,7 +30,7 @@ class sEMGSignalDataset(Dataset):
     return signal, label
 
 class sEMGtransformer(nn.Module):
-  def __init__(self, patch_size=64, d_model=512, nhead=8, dim_feedforward=2048, dropout=0.1):
+  def __init__(self, patch_size=64, d_model=512, nhead=8, dim_feedforward=2048, dropout=0.1, num_layers=1):
     super().__init__()
     self.patch_size = patch_size
     self.seq_len = 4000 // patch_size
@@ -38,10 +38,9 @@ class sEMGtransformer(nn.Module):
     self.dropout = nn.Dropout(dropout)
     self.cls_token = nn.Parameter(torch.rand(1, 1, d_model))
     self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len+1, d_model))
-
     encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout,
                                                activation=nn.GELU(), batch_first=True, norm_first=True)
-    self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=1)
+    self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
     self.output_project = nn.Linear(d_model, 2)
 
   def forward(self, x):
@@ -118,7 +117,7 @@ if __name__ == "__main__":
   dataloader_train = DataLoader(dataset_train, batch_size=bsz, shuffle=True)
   dataloader_valid = DataLoader(dataset_valid, batch_size=bsz, shuffle=False)
 
-  model = sEMGtransformer(patch_size=64, d_model=512, nhead=8, dim_feedforward=2048)
+  model = sEMGtransformer(patch_size=64, d_model=512, nhead=8, dim_feedforward=2048, dropout=0.1, num_layers=2)
   model.to("cuda")
 
   criterion = nn.CrossEntropyLoss()
