@@ -66,7 +66,7 @@ class sEMGtransformer(nn.Module):
 
 
 if __name__ == "__main__":
-  # to keep me sane
+  # to stay sane
   np.random.seed(0)
   torch.manual_seed(0)
 
@@ -125,6 +125,7 @@ if __name__ == "__main__":
 
   criterion = nn.CrossEntropyLoss()
   optimizer = torch.optim.AdamW(model.parameters())
+  scaler = torch.cuda.amp.GradScaler()
 
   writer = SummaryWriter()
   for epoch in tqdm(range(1000), desc="Training"):
@@ -132,14 +133,15 @@ if __name__ == "__main__":
     correct_train = 0
     model.train()
     for batch, (inputs, targets) in enumerate(dataloader_train):
-      optimizer.zero_grad()
-
       inputs, targets = inputs.to("cuda"), targets.to("cuda")
-      outputs = model(inputs)
-      loss = criterion(outputs, targets)
+      optimizer.zero_grad()
+      with torch.autocast(device_type="cuda", dtype=torch.float16):
+        outputs = model(inputs)
+        loss = criterion(outputs, targets)
 
-      loss.backward()
-      optimizer.step()
+      scaler.scale(loss).backward()
+      scaler.step(optimizer)
+      scaler.update()
 
       _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
       _, labels    = torch.max(targets, 1)
@@ -166,3 +168,5 @@ if __name__ == "__main__":
     writer.add_scalar("accuracy/valid", correct_valid/len(dataset_valid), epoch)
 
   writer.close()
+
+  # Leave-one-out testing
