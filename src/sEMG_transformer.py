@@ -1,4 +1,4 @@
-import torch
+import torch, argparse
 import numpy as np
 import scipy.io as sio
 import torch.nn.functional as F
@@ -34,37 +34,54 @@ class sEMGtransformer(nn.Module):
     super().__init__()
     self.patch_size = patch_size
     self.seq_len = 4000 // patch_size
+
     self.input_project = nn.Linear(4*self.patch_size, d_model)
     self.dropout = nn.Dropout(dropout)
-    self.cls_token = nn.Parameter(torch.rand(1, 1, d_model))
-    self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len+1, d_model))
     encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout,
                                                activation=nn.GELU(), batch_first=True, norm_first=True)
-    self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-    self.output_project = nn.Linear(d_model, 2)
+    self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+    self.mlp_head = nn.Linear(d_model, 2)
+
+    self.cls_token = nn.Parameter(torch.rand(1, 1, d_model))
+    self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len+1, d_model))
 
   def forward(self, x):
-    # Convert from signal to patch
+    # convert from raw signals to signal patches
     x = x[:, :, :(x.shape[2] // self.patch_size)*self.patch_size]
     B, C, L = x.shape
-    x = x.reshape(B, C, L//self.patch_size, self.patch_size)
-    x = x.permute(0, 2, 1, 3)
-    x = x.flatten(2,3)
-    x = self.input_project(x)
+    x = x.reshape(B, C, L//self.patch_size, self.patch_size)  # [B, C, seq_len, patch_size]
+    x = x.permute(0, 2, 1, 3).flatten(2,3)                    # [B, seq_len, C*patch_size]
+    x = self.input_project(x)                                 # [B, seq_len, d_model]
 
-    # Add class token and positional embedding
+    # add class token and positional embedding
     cls_token = self.cls_token.repeat(B,1,1)
     x = torch.cat((cls_token, x), dim=1)
     x = x + self.pos_embedding[:,:(self.seq_len+1)]
     x = self.dropout(x)
 
-    # Apply transformer
-    x = self.encoder(x)
-    x = x.mean(dim=1)
-    return self.output_project(x)
+    x = self.transformer_encoder(x)
+    
+    # extract only the cls_token
+    x = x[:, 0]
+    x = self.mlp_head(x)
+    return x
 
 
 if __name__ == "__main__":
+  parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
+  # training config
+  parser.add_argument('-epochs', type=int, default=1000, help="number of epochs")
+  parser.add_argument('-bsz', type=int, default=32, help="batch size")
+  parser.add_argument('-lr', type=float, default=0.001, help="learning rate")
+  # model config
+  parser.add_argument('-psz', type=int, default=64, help="signal patch size")
+  parser.add_argument('-d_model', type=int, default=512, help="transformer embedding dim")
+  parser.add_argument('-nhead', type=int, default=8, help="transformer number of attention heads")
+  parser.add_argument('-dim_feedforward', type=int, default=2048, help="transformer feed-forward dim")
+  parser.add_argument('-num_layers', type=int, default=1, help="number of transformer encoder layers")
+  parser.add_argument('-dropout', type=float, default=0.1, help="dropout rate")
+  args = parser.parse_args()
+
   # to stay sane
   np.random.seed(0)
   torch.manual_seed(0)
@@ -113,19 +130,20 @@ if __name__ == "__main__":
   dataset_train = sEMGSignalDataset(X_train, Y_train)
   dataset_valid = sEMGSignalDataset(X_valid, Y_valid)
 
-  bsz = 32
-  dataloader_train = DataLoader(dataset_train, batch_size=bsz, shuffle=True)
-  dataloader_valid = DataLoader(dataset_valid, batch_size=bsz, shuffle=False)
+  # bsz = 32
+  dataloader_train = DataLoader(dataset_train, batch_size=args.bsz, shuffle=True)
+  dataloader_valid = DataLoader(dataset_valid, batch_size=args.bsz, shuffle=False)
 
-  model = sEMGtransformer(patch_size=64, d_model=512, nhead=8, dim_feedforward=2048, dropout=0.1, num_layers=2)
+  model = sEMGtransformer(patch_size=args.psz, d_model=args.d_model, nhead=args.nhead, dim_feedforward=args.dim_feedforward, dropout=args.dropout,
+                          num_layers=args.num_layers)
   model.to("cuda")
 
   criterion = nn.CrossEntropyLoss()
-  optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+  optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
   scaler = torch.cuda.amp.GradScaler()
 
   writer = SummaryWriter()
-  for epoch in tqdm(range(1000), desc="Training"):
+  for epoch in tqdm(range(args.epochs), desc="Training"):
     loss_train = 0
     correct_train = 0
     model.train()
