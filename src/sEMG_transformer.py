@@ -30,19 +30,19 @@ class sEMGSignalDataset(Dataset):
     return signal, label
 
 class sEMGtransformer(nn.Module):
-  def __init__(self, patch_size=64, d_model=512, nhead=8, dim_feedforward=2048):
+  def __init__(self, patch_size=64, d_model=512, nhead=8, dim_feedforward=2048, dropout=0.1):
     super().__init__()
     self.patch_size = patch_size
-    self.d_model = d_model
     self.seq_len = 4000 // patch_size
     self.input_project = nn.Linear(4*self.patch_size, d_model)
-    self.encoder = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
-                                              dropout=0.1, activation=nn.GELU(), batch_first=True, norm_first=True)
-    self.output_project = nn.Linear(d_model, 2)
-
-    # Parameters/Embeddings
+    self.dropout = nn.Dropout(dropout)
     self.cls_token = nn.Parameter(torch.rand(1, 1, d_model))
     self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len+1, d_model))
+
+    encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout,
+                                               activation=nn.GELU(), batch_first=True, norm_first=True)
+    self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=1)
+    self.output_project = nn.Linear(d_model, 2)
 
   def forward(self, x):
     # Convert from signal to patch
@@ -57,7 +57,7 @@ class sEMGtransformer(nn.Module):
     cls_token = self.cls_token.repeat(B,1,1)
     x = torch.cat((cls_token, x), dim=1)
     x = x + self.pos_embedding[:,:(self.seq_len+1)]
-    x = F.dropout(x, p=0.1)
+    x = self.dropout(x)
 
     # Apply transformer
     x = self.encoder(x)
@@ -77,7 +77,6 @@ if __name__ == "__main__":
   for i in range(40):
     # stack all inputs into [N,C,L] format
     x = np.stack(signals[i], axis=1)
-
     # one-hot encode the binary labels
     N = labels[i][0].shape[0]
     mapped_indices = (labels[i][0] == 1).astype(int)
@@ -94,18 +93,17 @@ if __name__ == "__main__":
   # normalize X channel-wise
   X_means = np.mean(X, axis=(0,2))
   X_stds = np.std(X, axis=(0,2))
+  X_norm = (X - X_means[np.newaxis,:,np.newaxis]) / X_stds[np.newaxis,:,np.newaxis]
   print(f"X means {X_means}")
   print(f"X stds {X_stds}")
-  X_norm = (X - X_means[np.newaxis,:,np.newaxis]) / X_stds[np.newaxis,:,np.newaxis]
 
   # split training and validation
   num_samples = X_norm.shape[0]
   indices = np.arange(num_samples)
   np.random.shuffle(indices)
-
   split_idx = int(num_samples*0.9)
-  train_idx, valid_idx = indices[:split_idx], indices[split_idx:]
 
+  train_idx, valid_idx = indices[:split_idx], indices[split_idx:]
   X_train, X_valid = X_norm[train_idx], X_norm[valid_idx]
   Y_train, Y_valid = Y[train_idx], Y[valid_idx]
   print(f"X_train {X_train.shape}")
@@ -113,10 +111,10 @@ if __name__ == "__main__":
   print(f"X_valid {X_valid.shape}")
   print(f"Y_valid {Y_valid.shape}")
 
-  bsz = 32
-
   dataset_train = sEMGSignalDataset(X_train, Y_train)
   dataset_valid = sEMGSignalDataset(X_valid, Y_valid)
+
+  bsz = 32
   dataloader_train = DataLoader(dataset_train, batch_size=bsz, shuffle=True)
   dataloader_valid = DataLoader(dataset_valid, batch_size=bsz, shuffle=False)
 
@@ -124,7 +122,7 @@ if __name__ == "__main__":
   model.to("cuda")
 
   criterion = nn.CrossEntropyLoss()
-  optimizer = torch.optim.AdamW(model.parameters())
+  optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
   scaler = torch.cuda.amp.GradScaler()
 
   writer = SummaryWriter()
