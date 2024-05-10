@@ -1,16 +1,36 @@
-import numpy as np
-from tqdm import tqdm
 import torch
+import numpy as np
+import scipy.io as sio
 import torch.nn.functional as F
 from torch import nn
-from torch.utils.data import DataLoader
+from tqdm import tqdm
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from util.sEMGhelpers import load_raw_signals
-from util.sEMGFeatureLoader import sEMGSignalDataset
+def load_raw_signals(file):
+  data = sio.loadmat(file)
+  signals = data['DATA']
+  labels = data['LABEL']
+  VFI1 = data['SUBJECT_VFI']       # VFI-1 Score
+  sub_id = data['SUBJECT_ID']        # Sujbect ID
+  sub_skinfold = data['SUBJECT_SKINFOLD']  # Subject Skinfold Thickness
+  return signals, labels, VFI1, sub_id, sub_skinfold
+
+class sEMGSignalDataset(Dataset):
+  def __init__(self, signals, labels):
+    self.signals = signals
+    self.labels = labels
+
+  def __len__(self):
+    return len(self.labels)
+
+  def __getitem__(self, idx):
+    signal = torch.tensor(self.signals[idx,:,:], dtype=torch.float32)
+    label = torch.tensor(self.labels[idx,:], dtype=torch.float32)
+    return signal, label
 
 class sEMGtransformer(nn.Module):
-  def __init__(self, patch_size=256, d_model=512, nhead=8, dim_feedforward=2048):
+  def __init__(self, patch_size=64, d_model=512, nhead=8, dim_feedforward=2048):
     super().__init__()
     self.patch_size = patch_size
     self.d_model = d_model
@@ -44,7 +64,12 @@ class sEMGtransformer(nn.Module):
     x = x.mean(dim=1)
     return self.output_project(x)
 
+
 if __name__ == "__main__":
+  # to keep me sane
+  np.random.seed(0)
+  torch.manual_seed(0)
+
   # signal pre-processing
   signals, labels, VFI1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
 
@@ -73,12 +98,11 @@ if __name__ == "__main__":
   print(f"X stds {X_stds}")
   X_norm = (X - X_means[np.newaxis,:,np.newaxis]) / X_stds[np.newaxis,:,np.newaxis]
 
-  # shuffle indices
+  # split training and validation
   num_samples = X_norm.shape[0]
   indices = np.arange(num_samples)
   np.random.shuffle(indices)
 
-  # split indices for train and test
   split_idx = int(num_samples*0.9)
   train_idx, valid_idx = indices[:split_idx], indices[split_idx:]
 
@@ -96,14 +120,14 @@ if __name__ == "__main__":
   dataloader_train = DataLoader(dataset_train, batch_size=bsz, shuffle=True)
   dataloader_valid = DataLoader(dataset_valid, batch_size=bsz, shuffle=False)
 
-  model = sEMGtransformer(patch_size=32, d_model=512, nhead=8, dim_feedforward=2048)
+  model = sEMGtransformer(patch_size=64, d_model=512, nhead=8, dim_feedforward=2048)
   model.to("cuda")
 
   criterion = nn.CrossEntropyLoss()
   optimizer = torch.optim.AdamW(model.parameters())
 
   writer = SummaryWriter()
-  for epoch in tqdm(range(750), desc="Training Epochs"):
+  for epoch in tqdm(range(1000), desc="Training Epochs"):
     loss_train = 0
     correct_train = 0
     model.train()
