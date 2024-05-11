@@ -1,4 +1,4 @@
-import torch, wandb, argparse
+import copy, torch, wandb, argparse
 import numpy as np
 import scipy.io as sio
 import torch.nn.functional as F
@@ -65,9 +65,18 @@ class sEMGtransformer(nn.Module):
     x = self.mlp_head(x)
     return x
   
+def count_correct(outputs, targets):
+  _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
+  _, labels    = torch.max(targets, 1)
+  return (predicted == labels).sum().item()
+
 def train(config):
   # signal pre-processing
   signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
+
+  sub_test = config.sub_idx
+  print(f"Subject R{sub_id[sub_test][0][0][0]}")
+  wandb.log({"sub_id": sub_id[sub_test][0][0][0]})
 
   X, Y = [], []
   for i in range(40):
@@ -85,13 +94,14 @@ def train(config):
   # normalize the signals channel-wise
   X_means = np.mean(np.concatenate(X, axis=0), axis=(0,2))
   X_stds = np.std(np.concatenate(X, axis=0), axis=(0,2))
+  for i in range(40):
+    X[i] = (X[i] - X_means[np.newaxis,:,np.newaxis]) / X_stds[np.newaxis,:,np.newaxis]
+  print(f"X {np.concatenate(X, axis=0).shape}")
 
-  # TODO: leave-one-out split
-  # split training and validation
+  # leave-one-out split
+  X_test, Y_test = X[sub_test], Y[sub_test]
+  X, Y = X[:sub_test] + X[sub_test+1:], Y[:sub_test] + Y[sub_test+1:]
   X, Y = np.concatenate(X, axis=0), np.concatenate(Y, axis=0)
-  X_norm = (X - X_means[np.newaxis,:,np.newaxis]) / X_stds[np.newaxis,:,np.newaxis]
-  print(f"X {X_norm.shape}")
-  print(f"Y {X_norm.shape}")
 
   num_samples = X.shape[0]
   indices = np.arange(num_samples)
@@ -99,18 +109,19 @@ def train(config):
   split_idx = int(num_samples*0.9)
   train_idx, valid_idx = indices[:split_idx], indices[split_idx:]
 
-  X_train, X_valid = X_norm[train_idx], X_norm[valid_idx]
+  X_train, X_valid = X[train_idx], X[valid_idx]
   Y_train, Y_valid = Y[train_idx], Y[valid_idx]
   print(f"X_train {X_train.shape}")
-  print(f"Y_train {Y_train.shape}")
   print(f"X_valid {X_valid.shape}")
-  print(f"Y_valid {Y_valid.shape}")
+  print(f"X_test {X_test.shape}")
 
   dataset_train = sEMGSignalDataset(X_train, Y_train)
   dataset_valid = sEMGSignalDataset(X_valid, Y_valid)
+  dataset_test  = sEMGSignalDataset(X_test, Y_test)
 
   dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=True)
   dataloader_valid = DataLoader(dataset_valid, batch_size=config.bsz, shuffle=False)
+  dataloader_test  = DataLoader(dataset_test,  batch_size=config.bsz, shuffle=False)
 
   model = sEMGtransformer(patch_size=config.psz, d_model=config.d_model, nhead=config.nhead, dim_feedforward=config.dim_feedforward,
                           dropout=config.dropout, num_layers=config.num_layers)
@@ -122,6 +133,7 @@ def train(config):
   scaler = torch.cuda.amp.GradScaler()
 
   accuracy_best = 0
+  model_best = None
   for epoch in tqdm(range(config.epochs), desc="Training"):
     loss_train = 0
     correct_train = 0
@@ -137,9 +149,7 @@ def train(config):
       scaler.step(optimizer)
       scaler.update()
 
-      _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
-      _, labels    = torch.max(targets, 1)
-      correct_train += (predicted == labels).sum().item()
+      correct_train += count_correct(outputs, targets)
       loss_train += loss.item()
 
     wandb.log({"loss/train": loss_train/len(dataset_train), "accuracy/train": correct_train/len(dataset_train)}, step=epoch)
@@ -151,23 +161,29 @@ def train(config):
       inputs, targets = inputs.to("cuda"), targets.to("cuda")
       outputs = model(inputs)
       loss = criterion(outputs, targets)
-
-      _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
-      _, labels    = torch.max(targets, 1)
-      correct_valid += (predicted == labels).sum().item()
+      correct_valid += count_correct(outputs, targets)
       loss_valid += loss.item()
 
     wandb.log({"loss/valid": loss_valid/len(dataset_valid), "accuracy/valid": correct_valid/len(dataset_valid)}, step=epoch)
-    if correct_valid/len(dataset_valid) > accuracy_best: accuracy_best = correct_valid/len(dataset_valid)
+
+    if correct_valid/len(dataset_valid) > accuracy_best: 
+      accuracy_best = correct_valid/len(dataset_valid)
+      model_best = copy.deepcopy(model)
 
     scheduler.step()
 
-  wandb.log({"metrics/accuracy": accuracy_best})
+  correct_test = 0
+  for inputs, targets in dataloader_test:
+    inputs, targets = inputs.to("cuda"), targets.to("cuda")
+    outputs = model_best(inputs)
+    correct_test += count_correct(outputs, targets)
+  wandb.log({"accuracy/test": correct_test/len(dataset_test)})
 
-  # leave-one-out testing
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
+  # experiment config
+  parser.add_argument('--sub_idx', type=int, default=0, help="subject index")
   # training config
   parser.add_argument('--seed', type=int, default=0, help="random seed")
   parser.add_argument('--epochs', type=int, default=1000, help="number of epochs")
@@ -175,8 +191,8 @@ if __name__ == "__main__":
   # optimizer config
   parser.add_argument('--lr', type=float, default=0.001, help="learning rate")
   parser.add_argument('--wd', type=float, default=0.01, help="weight decay")
-  parser.add_argument('--step_size', type=int, default=500, help="lr scheduler step size")
-  parser.add_argument('--gamma', type=float, default=0.5, help="lr scheduler gamma")
+  parser.add_argument('--step_size', type=int, default=250, help="lr scheduler step size")
+  parser.add_argument('--gamma', type=float, default=0.8, help="lr scheduler gamma")
   # model config
   parser.add_argument('--psz', type=int, default=64, help="signal patch size")
   parser.add_argument('--d_model', type=int, default=512, help="transformer embedding dim")
@@ -191,5 +207,7 @@ if __name__ == "__main__":
 
   np.random.seed(config.seed)
   torch.manual_seed(config.seed)
+
+  print(f"torch version: {torch.__version__}")
 
   train(config)
