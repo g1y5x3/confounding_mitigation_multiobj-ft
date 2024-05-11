@@ -115,11 +115,10 @@ def train(config):
   model = sEMGtransformer(patch_size=config.psz, d_model=config.d_model, nhead=config.nhead, dim_feedforward=config.dim_feedforward,
                           dropout=config.dropout, num_layers=config.num_layers)
   model.to("cuda")
-  # TODO: more tests
-  # model_compiled = torch.compile(model)
 
   criterion = nn.CrossEntropyLoss()
   optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+  scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.step_size, gamma=config.gamma)
   scaler = torch.cuda.amp.GradScaler()
 
   accuracy_best = 0
@@ -132,7 +131,6 @@ def train(config):
       optimizer.zero_grad()
       with torch.autocast(device_type="cuda", dtype=torch.float16):
         outputs = model(inputs)
-        # outputs = model_compiled(inputs)
         loss = criterion(outputs, targets)
 
       scaler.scale(loss).backward()
@@ -152,7 +150,6 @@ def train(config):
     for inputs, targets in dataloader_valid:
       inputs, targets = inputs.to("cuda"), targets.to("cuda")
       outputs = model(inputs)
-      # outputs = model_compiled(inputs)
       loss = criterion(outputs, targets)
 
       _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
@@ -163,7 +160,9 @@ def train(config):
     wandb.log({"loss/valid": loss_valid/len(dataset_valid), "accuracy/valid": correct_valid/len(dataset_valid)}, step=epoch)
     if correct_valid/len(dataset_valid) > accuracy_best: accuracy_best = correct_valid/len(dataset_valid)
 
-  wandb.log({"accuracy_best": accuracy_best})
+    scheduler.step()
+
+  wandb.log({"metrics/accuracy": accuracy_best})
 
   # leave-one-out testing
 
@@ -176,6 +175,8 @@ if __name__ == "__main__":
   # optimizer config
   parser.add_argument('--lr', type=float, default=0.001, help="learning rate")
   parser.add_argument('--wd', type=float, default=0.01, help="weight decay")
+  parser.add_argument('--step_size', type=int, default=500, help="lr scheduler step size")
+  parser.add_argument('--gamma', type=float, default=0.5, help="lr scheduler gamma")
   # model config
   parser.add_argument('--psz', type=int, default=64, help="signal patch size")
   parser.add_argument('--d_model', type=int, default=512, help="transformer embedding dim")
@@ -185,11 +186,10 @@ if __name__ == "__main__":
   parser.add_argument('--dropout', type=float, default=0.1, help="dropout rate")
   args = parser.parse_args()
 
-  # to stay sane
-  np.random.seed(args.seed)
-  torch.manual_seed(args.seed)
-
   wandb.init(project="sEMG_transformers", config=args)
   config = wandb.config
+
+  np.random.seed(config.seed)
+  torch.manual_seed(config.seed)
 
   train(config)
