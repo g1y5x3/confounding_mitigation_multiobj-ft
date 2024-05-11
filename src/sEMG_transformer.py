@@ -1,11 +1,10 @@
-import torch, argparse
+import torch, wandb, argparse
 import numpy as np
 import scipy.io as sio
 import torch.nn.functional as F
 from torch import nn
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
-from torch.utils.tensorboard import SummaryWriter
 
 def load_raw_signals(file):
   data = sio.loadmat(file)
@@ -65,30 +64,8 @@ class sEMGtransformer(nn.Module):
     x = x.mean(dim=1)
     x = self.mlp_head(x)
     return x
-
-
-if __name__ == "__main__":
-  parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
-  # training config
-  parser.add_argument('-seed', type=int, default=0, help="random seed")
-  parser.add_argument('-epochs', type=int, default=1000, help="number of epochs")
-  parser.add_argument('-bsz', type=int, default=32, help="batch size")
-  # optimizer config
-  parser.add_argument('-lr', type=float, default=0.001, help="learning rate")
-  parser.add_argument('-wd', type=float, default=0.01, help="weight decay")
-  # model config
-  parser.add_argument('-psz', type=int, default=64, help="signal patch size")
-  parser.add_argument('-d_model', type=int, default=512, help="transformer embedding dim")
-  parser.add_argument('-nhead', type=int, default=8, help="transformer number of attention heads")
-  parser.add_argument('-dim_feedforward', type=int, default=2048, help="transformer feed-forward dim")
-  parser.add_argument('-num_layers', type=int, default=1, help="number of transformer encoder layers")
-  parser.add_argument('-dropout', type=float, default=0.1, help="dropout rate")
-  args = parser.parse_args()
-
-  # to stay sane
-  np.random.seed(args.seed)
-  torch.manual_seed(args.seed)
-
+  
+def train(config):
   # signal pre-processing
   signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
 
@@ -105,19 +82,18 @@ if __name__ == "__main__":
     X.append(x)
     Y.append(y_onehot)
 
-  X, Y = np.concatenate(X, axis=0), np.concatenate(Y, axis=0)
-  print(f"X {X.shape}")
-  print(f"Y {Y.shape}")
+  # normalize the signals channel-wise
+  X_means = np.mean(np.concatenate(X, axis=0), axis=(0,2))
+  X_stds = np.std(np.concatenate(X, axis=0), axis=(0,2))
 
-  # normalize X channel-wise
-  X_means = np.mean(X, axis=(0,2))
-  X_stds = np.std(X, axis=(0,2))
-  X_norm = (X - X_means[np.newaxis,:,np.newaxis]) / X_stds[np.newaxis,:,np.newaxis]
-  print(f"X means {X_means}")
-  print(f"X stds {X_stds}")
-
+  # TODO: leave-one-out split
   # split training and validation
-  num_samples = X_norm.shape[0]
+  X, Y = np.concatenate(X, axis=0), np.concatenate(Y, axis=0)
+  X_norm = (X - X_means[np.newaxis,:,np.newaxis]) / X_stds[np.newaxis,:,np.newaxis]
+  print(f"X {X_norm.shape}")
+  print(f"Y {X_norm.shape}")
+
+  num_samples = X.shape[0]
   indices = np.arange(num_samples)
   np.random.shuffle(indices)
   split_idx = int(num_samples*0.9)
@@ -133,22 +109,21 @@ if __name__ == "__main__":
   dataset_train = sEMGSignalDataset(X_train, Y_train)
   dataset_valid = sEMGSignalDataset(X_valid, Y_valid)
 
-  dataloader_train = DataLoader(dataset_train, batch_size=args.bsz, shuffle=True)
-  dataloader_valid = DataLoader(dataset_valid, batch_size=args.bsz, shuffle=False)
+  dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=True)
+  dataloader_valid = DataLoader(dataset_valid, batch_size=config.bsz, shuffle=False)
 
-  model = sEMGtransformer(patch_size=args.psz, d_model=args.d_model, nhead=args.nhead, dim_feedforward=args.dim_feedforward, dropout=args.dropout,
-                          num_layers=args.num_layers)
+  model = sEMGtransformer(patch_size=config.psz, d_model=config.d_model, nhead=config.nhead, dim_feedforward=config.dim_feedforward,
+                          dropout=config.dropout, num_layers=config.num_layers)
   model.to("cuda")
   # TODO: more tests
   # model_compiled = torch.compile(model)
 
   criterion = nn.CrossEntropyLoss()
-  optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+  optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
   scaler = torch.cuda.amp.GradScaler()
 
-  writer = SummaryWriter()
   accuracy_best = 0
-  for epoch in tqdm(range(args.epochs), desc="Training"):
+  for epoch in tqdm(range(config.epochs), desc="Training"):
     loss_train = 0
     correct_train = 0
     model.train()
@@ -169,8 +144,7 @@ if __name__ == "__main__":
       correct_train += (predicted == labels).sum().item()
       loss_train += loss.item()
 
-    writer.add_scalar("loss/train", loss_train/len(dataset_train), epoch)
-    writer.add_scalar("accuracy/train", correct_train/len(dataset_train), epoch)
+    wandb.log({"loss/train": loss_train/len(dataset_train), "accuracy/train": correct_train/len(dataset_train)}, step=epoch)
 
     loss_valid = 0
     correct_valid = 0
@@ -186,12 +160,36 @@ if __name__ == "__main__":
       correct_valid += (predicted == labels).sum().item()
       loss_valid += loss.item()
 
-    writer.add_scalar("loss/valid", loss_valid/len(dataset_valid), epoch)
-    writer.add_scalar("accuracy/valid", correct_valid/len(dataset_valid), epoch)
-
+    wandb.log({"loss/valid": loss_valid/len(dataset_valid), "accuracy/valid": correct_valid/len(dataset_valid)}, step=epoch)
     if correct_valid/len(dataset_valid) > accuracy_best: accuracy_best = correct_valid/len(dataset_valid)
 
-  writer.add_hparams(vars(args), {"accuracy_best": accuracy_best})
-  writer.close()
+  wandb.log({"accuracy_best": accuracy_best})
 
   # leave-one-out testing
+
+if __name__ == "__main__":
+  parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
+  # training config
+  parser.add_argument('--seed', type=int, default=0, help="random seed")
+  parser.add_argument('--epochs', type=int, default=1000, help="number of epochs")
+  parser.add_argument('--bsz', type=int, default=32, help="batch size")
+  # optimizer config
+  parser.add_argument('--lr', type=float, default=0.001, help="learning rate")
+  parser.add_argument('--wd', type=float, default=0.01, help="weight decay")
+  # model config
+  parser.add_argument('--psz', type=int, default=64, help="signal patch size")
+  parser.add_argument('--d_model', type=int, default=512, help="transformer embedding dim")
+  parser.add_argument('--nhead', type=int, default=8, help="transformer number of attention heads")
+  parser.add_argument('--dim_feedforward', type=int, default=2048, help="transformer feed-forward dim")
+  parser.add_argument('--num_layers', type=int, default=1, help="number of transformer encoder layers")
+  parser.add_argument('--dropout', type=float, default=0.1, help="dropout rate")
+  args = parser.parse_args()
+
+  # to stay sane
+  np.random.seed(args.seed)
+  torch.manual_seed(args.seed)
+
+  wandb.init(project="sEMG_transformers", config=args)
+  config = wandb.config
+
+  train(config)
