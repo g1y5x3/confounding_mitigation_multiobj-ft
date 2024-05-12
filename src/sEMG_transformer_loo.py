@@ -70,7 +70,10 @@ def count_correct(outputs, targets):
   _, labels    = torch.max(targets, 1)
   return (predicted == labels).sum().item()
 
-def train(config, signals, labels):
+def train(config, signals, labels, sub_id):
+  sub_test = config.sub_idx
+  print(f"Subject R{sub_id[args.sub_idx][0][0][0]}")
+
   X, Y = [], []
   for i in range(40):
     # stack all inputs into [N,C,L] format
@@ -92,7 +95,6 @@ def train(config, signals, labels):
   print(f"X {np.concatenate(X, axis=0).shape}")
 
   # leave-one-out split
-  sub_test = config.sub_idx
   X_test, Y_test = X[sub_test], Y[sub_test]
   X, Y = X[:sub_test] + X[sub_test+1:], Y[:sub_test] + Y[sub_test+1:]
   X, Y = np.concatenate(X, axis=0), np.concatenate(Y, axis=0)
@@ -126,8 +128,8 @@ def train(config, signals, labels):
   scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.step_size, gamma=config.gamma)
   scaler = torch.cuda.amp.GradScaler()
 
-  accuracy_best = 0
-  model_best = None
+  accuracy_valid_best = 0
+  accuracy_test_best = 0
   for epoch in tqdm(range(config.epochs), desc="Training"):
     loss_train = 0
     correct_train = 0
@@ -160,18 +162,16 @@ def train(config, signals, labels):
 
     wandb.log({"loss/valid": loss_valid/len(dataset_valid), "accuracy/valid": correct_valid/len(dataset_valid)}, step=epoch)
 
-    if correct_valid/len(dataset_valid) > accuracy_best: 
-      accuracy_best = correct_valid/len(dataset_valid)
-      model_best = copy.deepcopy(model)
+    if correct_valid/len(dataset_valid) > accuracy_valid_best: 
+      accuracy_valid_best = correct_valid/len(dataset_valid)
+      correct_test = 0
+      for inputs, targets in dataloader_test:
+        inputs, targets = inputs.to("cuda"), targets.to("cuda")
+        outputs = model(inputs)
+        correct_test += count_correct(outputs, targets)
+      wandb.log({"accuracy/test": correct_test/len(dataset_test)})
 
     scheduler.step()
-
-  correct_test = 0
-  for inputs, targets in dataloader_test:
-    inputs, targets = inputs.to("cuda"), targets.to("cuda")
-    outputs = model_best(inputs)
-    correct_test += count_correct(outputs, targets)
-  wandb.log({"accuracy/test": correct_test/len(dataset_test)})
 
 
 if __name__ == "__main__":
@@ -199,11 +199,10 @@ if __name__ == "__main__":
   # load data
   signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
 
-  print(f"Subject R{sub_id[args.sub_idx][0][0][0]}")
-  wandb.init(project="sEMG_transformers", config=args)
+  wandb.init(project="sEMG_transformers", name=f"R{sub_id[args.sub_idx][0][0][0]}", config=args)
   config = wandb.config
 
   np.random.seed(config.seed)
   torch.manual_seed(config.seed)
 
-  train(config, signals, labels)
+  train(config, signals, labels, sub_id)
