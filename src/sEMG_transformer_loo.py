@@ -70,9 +70,7 @@ def count_correct(outputs, targets):
   _, labels    = torch.max(targets, 1)
   return (predicted == labels).sum().item()
 
-def train(config):
-  signals, labels, _, sub_id, _ = load_raw_signals("data/subjects_40_v6.mat")
-
+def train(config, signals, labels):
   X, Y = [], []
   for i in range(40):
     # stack all inputs into [N,C,L] format
@@ -94,6 +92,9 @@ def train(config):
   print(f"X {np.concatenate(X, axis=0).shape}")
 
   # leave-one-out split
+  sub_test = config.sub_idx
+  X_test, Y_test = X[sub_test], Y[sub_test]
+  X, Y = X[:sub_test] + X[sub_test+1:], Y[:sub_test] + Y[sub_test+1:]
   X, Y = np.concatenate(X, axis=0), np.concatenate(Y, axis=0)
 
   num_samples = X.shape[0]
@@ -106,12 +107,15 @@ def train(config):
   Y_train, Y_valid = Y[train_idx], Y[valid_idx]
   print(f"X_train {X_train.shape}")
   print(f"X_valid {X_valid.shape}")
+  print(f"X_test {X_test.shape}")
 
   dataset_train = sEMGSignalDataset(X_train, Y_train)
   dataset_valid = sEMGSignalDataset(X_valid, Y_valid)
+  dataset_test  = sEMGSignalDataset(X_test, Y_test)
 
   dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=True)
   dataloader_valid = DataLoader(dataset_valid, batch_size=config.bsz, shuffle=False)
+  dataloader_test  = DataLoader(dataset_test,  batch_size=config.bsz, shuffle=False)
 
   model = sEMGtransformer(patch_size=config.psz, d_model=config.d_model, nhead=config.nhead, dim_feedforward=config.dim_feedforward,
                           dropout=config.dropout, num_layers=config.num_layers)
@@ -162,6 +166,14 @@ def train(config):
 
     scheduler.step()
 
+  correct_test = 0
+  for inputs, targets in dataloader_test:
+    inputs, targets = inputs.to("cuda"), targets.to("cuda")
+    outputs = model_best(inputs)
+    correct_test += count_correct(outputs, targets)
+  wandb.log({"accuracy/test": correct_test/len(dataset_test)})
+
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
   # experiment config
@@ -184,12 +196,14 @@ if __name__ == "__main__":
   parser.add_argument('--dropout', type=float, default=0.1, help="dropout rate")
   args = parser.parse_args()
 
+  # load data
+  signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
+
+  print(f"Subject R{sub_id[args.sub_idx][0][0][0]}")
   wandb.init(project="sEMG_transformers", config=args)
   config = wandb.config
 
   np.random.seed(config.seed)
   torch.manual_seed(config.seed)
 
-  print(f"torch version: {torch.__version__}")
-
-  train(config)
+  train(config, signals, labels)
