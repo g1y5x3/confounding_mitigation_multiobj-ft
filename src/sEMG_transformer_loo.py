@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
+from mlconfound.stats import partial_confound_test
 
 def load_raw_signals(file):
   data = sio.loadmat(file)
@@ -70,11 +71,11 @@ def count_correct(outputs, targets):
   _, labels    = torch.max(targets, 1)
   return (predicted == labels).sum().item()
 
-def train(config, signals, labels, sub_id):
+def train(config, signals, labels, sub_id, sub_skinfold):
   sub_test = config.sub_idx
   print(f"Subject R{sub_id[args.sub_idx][0][0][0]}")
 
-  X, Y = [], []
+  X, Y, C = [], [], []
   for i in range(40):
     # stack all inputs into [N,C,L] format
     x = np.stack(signals[i], axis=1)
@@ -86,6 +87,7 @@ def train(config, signals, labels, sub_id):
 
     X.append(x)
     Y.append(y_onehot)
+    C.append(sub_skinfold[i][0].mean(axis=1))
 
   # normalize the signals channel-wise
   X_means = np.mean(np.concatenate(X, axis=0), axis=(0,2))
@@ -96,8 +98,8 @@ def train(config, signals, labels, sub_id):
 
   # leave-one-out split
   X_test, Y_test = X[sub_test], Y[sub_test]
-  X, Y = X[:sub_test] + X[sub_test+1:], Y[:sub_test] + Y[sub_test+1:]
-  X, Y = np.concatenate(X, axis=0), np.concatenate(Y, axis=0)
+  X, Y, C = X[:sub_test] + X[sub_test+1:], Y[:sub_test] + Y[sub_test+1:], C[:sub_test] + C[sub_test+1:]
+  X, Y, C = np.concatenate(X, axis=0), np.concatenate(Y, axis=0), np.concatenate(C, axis=0)
 
   num_samples = X.shape[0]
   indices = np.arange(num_samples)
@@ -130,6 +132,7 @@ def train(config, signals, labels, sub_id):
 
   accuracy_valid_best = 0
   accuracy_test_best = 0
+  model_best = None
   for epoch in tqdm(range(config.epochs), desc="Training"):
     loss_train = 0
     correct_train = 0
@@ -164,14 +167,34 @@ def train(config, signals, labels, sub_id):
 
     if correct_valid/len(dataset_valid) > accuracy_valid_best: 
       accuracy_valid_best = correct_valid/len(dataset_valid)
+      model_best = copy.deepcopy(model)
       correct_test = 0
       for inputs, targets in dataloader_test:
         inputs, targets = inputs.to("cuda"), targets.to("cuda")
         outputs = model(inputs)
         correct_test += count_correct(outputs, targets)
+      accuracy_test_best = correct_test/len(dataset_test)
       wandb.log({"accuracy/test": correct_test/len(dataset_test)})
 
     scheduler.step()
+  
+  print(f"accuracy_valid_best: {accuracy_valid_best}")
+  print(f"accuracy_test_best: {accuracy_test_best}")
+
+  # cpt evaluation
+  C_train = C[train_idx]
+  Y_train_cpt = np.argmax(Y_train, axis=1)
+  Y_pred = []
+  dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=False)
+  for inputs, targets in dataloader_train:
+    inputs, targets = inputs.to("cuda"), targets.to("cuda")
+    outputs = model_best(inputs)
+    _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
+    Y_pred.append(predicted.cpu().numpy())
+  Y_pred_cpt = np.concatenate(Y_pred, axis=0)
+  ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
+  print(f"P-value: {ret.p}")
+  wandb.log({"p-value": ret.p})
 
 
 if __name__ == "__main__":
@@ -205,4 +228,4 @@ if __name__ == "__main__":
   np.random.seed(config.seed)
   torch.manual_seed(config.seed)
 
-  train(config, signals, labels, sub_id)
+  train(config, signals, labels, sub_id, sub_skinfold)
