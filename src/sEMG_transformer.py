@@ -70,7 +70,10 @@ def count_correct(outputs, targets):
   _, labels    = torch.max(targets, 1)
   return (predicted == labels).sum().item()
 
-def train(config):
+def train():
+  wandb.init(project="sEMG_transformers")
+  config = wandb.config
+
   signals, labels, _, sub_id, _ = load_raw_signals("data/subjects_40_v6.mat")
 
   X, Y = [], []
@@ -164,8 +167,6 @@ def train(config):
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
-  # experiment config
-  parser.add_argument('--sub_idx', type=int, default=0, help="subject index")
   # training config
   parser.add_argument('--seed', type=int, default=0, help="random seed")
   parser.add_argument('--epochs', type=int, default=1000, help="number of epochs")
@@ -183,13 +184,31 @@ if __name__ == "__main__":
   parser.add_argument('--num_layers', type=int, default=1, help="number of transformer encoder layers")
   parser.add_argument('--dropout', type=float, default=0.1, help="dropout rate")
   args = parser.parse_args()
+   
+  sweep_config = {
+    'method': 'random',
+    'metric': {
+      'name': 'accuracy/valid',
+      'goal': 'maximize'
+    },
+    'parameters': {
+      'epochs': {'values': [500, 1000, 1500]},
+      'bsz': {'values': [16, 32, 64]},
+      'lr': {'values': [0.0001, 0.001, 0.01]},
+      'wd': {'values': [0.001, 0.01, 0.1]},
+      'step_size': {'values': [100, 250, 500]},
+      'gamma': {'values': [0.5, 0.8, 0.9]},
+      'psz': {'values': [32, 64, 128]},
+      'd_model': {'values': [256, 512, 1024]},
+      'nhead': {'values': [4, 8, 16]},
+      'dim_feedforward': {'values': [1024, 2048, 4096]},
+      'num_layers': {'values': [1, 2, 3]},
+      'dropout': {'values': [0.1, 0.2, 0.3]}
+    },
+  }
 
-  wandb.init(project="sEMG_transformers", config=args)
-  config = wandb.config
+  np.random.seed(args.seed)
+  torch.manual_seed(args.seed)
 
-  np.random.seed(config.seed)
-  torch.manual_seed(config.seed)
-
-  print(f"torch version: {torch.__version__}")
-
-  train(config)
+  sweep_id = wandb.sweep(sweep_config, project="sEMG_transformers")
+  wandb.agent(sweep_id, function=train)
