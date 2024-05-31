@@ -62,7 +62,8 @@ class sEMGtransformer(nn.Module):
     x = self.transformer_encoder(x)
 
     # compare to using only the cls_token, using mean of embedding has a much smoother loss curve
-    x = x.mean(dim=1)
+    # x = x.mean(dim=1)
+    x = x[:,0,:]
     x = self.mlp_head(x)
     return x
   
@@ -203,20 +204,20 @@ if __name__ == "__main__":
   parser.add_argument('--sub_idx', type=int, default=0, help="subject index")
   # training config
   parser.add_argument('--seed', type=int, default=0, help="random seed")
-  parser.add_argument('--epochs', type=int, default=1000, help="number of epochs")
-  parser.add_argument('--bsz', type=int, default=32, help="batch size")
+  parser.add_argument('--epochs', type=int, default=500, help="number of epochs")
+  parser.add_argument('--bsz', type=int, default=64, help="batch size")
   # optimizer config
   parser.add_argument('--lr', type=float, default=0.001, help="learning rate")
-  parser.add_argument('--wd', type=float, default=0.01, help="weight decay")
-  parser.add_argument('--step_size', type=int, default=250, help="lr scheduler step size")
+  parser.add_argument('--wd', type=float, default=0.001, help="weight decay")
+  parser.add_argument('--step_size', type=int, default=500, help="lr scheduler step size")
   parser.add_argument('--gamma', type=float, default=0.8, help="lr scheduler gamma")
   # model config
   parser.add_argument('--psz', type=int, default=64, help="signal patch size")
-  parser.add_argument('--d_model', type=int, default=512, help="transformer embedding dim")
+  parser.add_argument('--d_model', type=int, default=256, help="transformer embedding dim")
   parser.add_argument('--nhead', type=int, default=8, help="transformer number of attention heads")
-  parser.add_argument('--dim_feedforward', type=int, default=2048, help="transformer feed-forward dim")
-  parser.add_argument('--num_layers', type=int, default=1, help="number of transformer encoder layers")
-  parser.add_argument('--dropout', type=float, default=0.1, help="dropout rate")
+  parser.add_argument('--dim_feedforward', type=int, default=1024, help="transformer feed-forward dim")
+  parser.add_argument('--num_layers', type=int, default=3, help="number of transformer encoder layers")
+  parser.add_argument('--dropout', type=float, default=0.3, help="dropout rate")
   args = parser.parse_args()
 
   # load data

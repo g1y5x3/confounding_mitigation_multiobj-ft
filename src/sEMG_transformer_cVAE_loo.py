@@ -40,7 +40,9 @@ class sEMGtransformerVAE(nn.Module):
     encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout,
                                                activation=nn.GELU(), batch_first=True, norm_first=True)
     self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-    self.mlp_head = nn.Linear(d_model, 2)
+    # self.mlp_head = nn.Linear(d_model, 2)
+    self.fc_mu = nn.Linear(d_model, 64)
+    self.fc_std = nn.Linear(d_model, 64)
 
     self.cls_token = nn.Parameter(torch.rand(1, 1, d_model))
     self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len+1, d_model))
@@ -60,9 +62,11 @@ class sEMGtransformerVAE(nn.Module):
     x = self.dropout(x)
 
     x = self.transformer_encoder(x)
+    print(x.shape)
 
     # compare to using only the cls_token, using mean of embedding has a much smoother loss curve
     x = x.mean(dim=1)
+    print(x.shape)
     x = self.mlp_head(x)
     return x
   
