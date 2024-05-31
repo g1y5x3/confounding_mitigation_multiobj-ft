@@ -35,21 +35,30 @@ class sEMGtransformerVAE(nn.Module):
     self.patch_size = patch_size
     self.seq_len = 4000 // patch_size
 
-    self.input_project = nn.Linear(4*self.patch_size, d_model)
-    self.dropout = nn.Dropout(dropout)
-    encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout,
-                                               activation=nn.GELU(), batch_first=True, norm_first=True)
-    self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-    # self.mlp_head = nn.Linear(d_model, 2)
-    self.fc_mu = nn.Linear(d_model, 64)
-    self.fc_std = nn.Linear(d_model, 64)
-
     self.cls_token = nn.Parameter(torch.rand(1, 1, d_model))
     self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len+1, d_model))
 
+    self.input_project = nn.Linear(4*self.patch_size, d_model)
+    self.dropout = nn.Dropout(dropout)
+
+    encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout,
+                                               activation=nn.GELU(), batch_first=True, norm_first=True)
+    self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+    self.fc_mu = nn.Linear(d_model, 64)
+    self.fc_logvar = nn.Linear(d_model, 64)
+
+    self.fc_z = nn.Linear(64, d_model)
+    decoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout,
+                                               activation=nn.GELU(), batch_first=True, norm_first=True)
+    self.transformer_decoder = nn.TransformerEncoder(decoder_layer, num_layers=num_layers)
+    self.output_project = nn.Linear(d_model, 4*self.patch_size)
+
+  def reparameterize(self, mu, logvar):
+    std = torch.exp(0.5 * logvar)
+    eps = torch.randn_like(std)
+    return mu + std * eps
+
   def forward(self, x):
-    # convert from raw signals to signal patches
-    x = x[:, :, :(x.shape[2] // self.patch_size)*self.patch_size]
     B, C, L = x.shape
     x = x.reshape(B, C, L//self.patch_size, self.patch_size)  # [B, C, seq_len, patch_size]
     x = x.permute(0, 2, 1, 3).flatten(2,3)                    # [B, seq_len, C*patch_size]
@@ -61,14 +70,23 @@ class sEMGtransformerVAE(nn.Module):
     x = x + self.pos_embedding[:,:(self.seq_len+1)]
     x = self.dropout(x)
 
+    # encoder
     x = self.transformer_encoder(x)
-    print(x.shape)
+    mu = self.fc_mu(x)
+    logvar = self.fc_logvar(x)
 
-    # compare to using only the cls_token, using mean of embedding has a much smoother loss curve
-    x = x.mean(dim=1)
-    print(x.shape)
-    x = self.mlp_head(x)
-    return x
+    # reparameterize
+    std = torch.exp(0.5*logvar)
+    eps = torch.randn_like(std)
+    z = mu + eps * std
+    z = F.gelu(self.fc_z(z))
+    z = self.transformer_decoder(z)
+
+    z = self.output_project(z)
+    z = z[:,1:,:].reshape(B, L//self.patch_size, C, self.patch_size ).permute(0, 2, 1, 3)
+    z = z.flatten(2,3)
+
+    return z, mu, logvar
   
 def count_correct(outputs, targets):
   _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
