@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
+from mlconfound.stats import partial_confound_test
 
 def load_raw_signals(file):
   data = sio.loadmat(file)
@@ -44,17 +45,6 @@ class sEMGtransformerVAE(nn.Module):
     self.cls_token = nn.Parameter(torch.rand(1, 1, d_model))
     self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len+1, d_model))
 
-  def encode(self, x):
-    pass
-
-  def reparameterize(self, mu, logvar):
-    std = torch.exp(0.5*logvar)
-    eps = torch.rand_like(std)
-    return mu + eps * std
-
-  def decode(self, x):
-    pass
-
   def forward(self, x):
     # convert from raw signals to signal patches
     x = x[:, :, :(x.shape[2] // self.patch_size)*self.patch_size]
@@ -81,13 +71,11 @@ def count_correct(outputs, targets):
   _, labels    = torch.max(targets, 1)
   return (predicted == labels).sum().item()
 
-def train():
-  wandb.init(project="sEMG_transformers")
-  config = wandb.config
+def train(config, signals, labels, sub_id, sub_skinfold):
+  sub_test = config.sub_idx
+  print(f"Subject R{sub_id[args.sub_idx][0][0][0]}")
 
-  signals, labels, _, sub_id, _ = load_raw_signals("data/subjects_40_v6.mat")
-
-  X, Y = [], []
+  X, Y, C = [], [], []
   for i in range(40):
     # stack all inputs into [N,C,L] format
     x = np.stack(signals[i], axis=1)
@@ -99,6 +87,7 @@ def train():
 
     X.append(x)
     Y.append(y_onehot)
+    C.append(sub_skinfold[i][0].mean(axis=1))
 
   # normalize the signals channel-wise
   X_means = np.mean(np.concatenate(X, axis=0), axis=(0,2))
@@ -108,7 +97,9 @@ def train():
   print(f"X {np.concatenate(X, axis=0).shape}")
 
   # leave-one-out split
-  X, Y = np.concatenate(X, axis=0), np.concatenate(Y, axis=0)
+  X_test, Y_test = X[sub_test], Y[sub_test]
+  X, Y, C = X[:sub_test] + X[sub_test+1:], Y[:sub_test] + Y[sub_test+1:], C[:sub_test] + C[sub_test+1:]
+  X, Y, C = np.concatenate(X, axis=0), np.concatenate(Y, axis=0), np.concatenate(C, axis=0)
 
   num_samples = X.shape[0]
   indices = np.arange(num_samples)
@@ -120,12 +111,15 @@ def train():
   Y_train, Y_valid = Y[train_idx], Y[valid_idx]
   print(f"X_train {X_train.shape}")
   print(f"X_valid {X_valid.shape}")
+  print(f"X_test {X_test.shape}")
 
   dataset_train = sEMGSignalDataset(X_train, Y_train)
   dataset_valid = sEMGSignalDataset(X_valid, Y_valid)
+  dataset_test  = sEMGSignalDataset(X_test, Y_test)
 
   dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=True)
   dataloader_valid = DataLoader(dataset_valid, batch_size=config.bsz, shuffle=False)
+  dataloader_test  = DataLoader(dataset_test,  batch_size=config.bsz, shuffle=False)
 
   model = sEMGtransformer(patch_size=config.psz, d_model=config.d_model, nhead=config.nhead, dim_feedforward=config.dim_feedforward,
                           dropout=config.dropout, num_layers=config.num_layers)
@@ -136,7 +130,8 @@ def train():
   scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.step_size, gamma=config.gamma)
   scaler = torch.cuda.amp.GradScaler()
 
-  accuracy_best = 0
+  accuracy_valid_best = 0
+  accuracy_test_best = 0
   model_best = None
   for epoch in tqdm(range(config.epochs), desc="Training"):
     loss_train = 0
@@ -170,14 +165,42 @@ def train():
 
     wandb.log({"loss/valid": loss_valid/len(dataset_valid), "accuracy/valid": correct_valid/len(dataset_valid)}, step=epoch)
 
-    if correct_valid/len(dataset_valid) > accuracy_best: 
-      accuracy_best = correct_valid/len(dataset_valid)
+    if correct_valid/len(dataset_valid) > accuracy_valid_best: 
+      accuracy_valid_best = correct_valid/len(dataset_valid)
       model_best = copy.deepcopy(model)
+      correct_test = 0
+      for inputs, targets in dataloader_test:
+        inputs, targets = inputs.to("cuda"), targets.to("cuda")
+        outputs = model(inputs)
+        correct_test += count_correct(outputs, targets)
+      accuracy_test_best = correct_test/len(dataset_test)
+      wandb.log({"accuracy/test": correct_test/len(dataset_test)})
 
     scheduler.step()
+  
+  print(f"accuracy_valid_best: {accuracy_valid_best}")
+  print(f"accuracy_test_best: {accuracy_test_best}")
+
+  # cpt evaluation
+  C_train = C[train_idx]
+  Y_train_cpt = np.argmax(Y_train, axis=1)
+  Y_pred = []
+  dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=False)
+  for inputs, targets in dataloader_train:
+    inputs, targets = inputs.to("cuda"), targets.to("cuda")
+    outputs = model_best(inputs)
+    _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
+    Y_pred.append(predicted.cpu().numpy())
+  Y_pred_cpt = np.concatenate(Y_pred, axis=0)
+  ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
+  print(f"P-value: {ret.p}")
+  wandb.log({"p-value": ret.p})
+
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
+  # experiment config
+  parser.add_argument('--sub_idx', type=int, default=0, help="subject index")
   # training config
   parser.add_argument('--seed', type=int, default=0, help="random seed")
   parser.add_argument('--epochs', type=int, default=500, help="number of epochs")
@@ -195,31 +218,14 @@ if __name__ == "__main__":
   parser.add_argument('--num_layers', type=int, default=3, help="number of transformer encoder layers")
   parser.add_argument('--dropout', type=float, default=0.3, help="dropout rate")
   args = parser.parse_args()
-   
-  sweep_config = {
-    'method': 'random',
-    'metric': {
-      'name': 'accuracy/valid',
-      'goal': 'maximize'
-    },
-    'parameters': {
-      'epochs': {'values': [500, 1000, 1500]},
-      'bsz': {'values': [16, 32, 64]},
-      'lr': {'values': [0.0001, 0.001, 0.01]},
-      'wd': {'values': [0.001, 0.01, 0.1]},
-      'step_size': {'values': [100, 250, 500]},
-      'gamma': {'values': [0.5, 0.8, 0.9]},
-      'psz': {'values': [32, 64, 128]},
-      'd_model': {'values': [256, 512, 1024]},
-      'nhead': {'values': [4, 8, 16]},
-      'dim_feedforward': {'values': [1024, 2048, 4096]},
-      'num_layers': {'values': [1, 2, 3]},
-      'dropout': {'values': [0.1, 0.2, 0.3]}
-    },
-  }
 
-  np.random.seed(args.seed)
-  torch.manual_seed(args.seed)
+  # load data
+  signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_v6.mat")
 
-  sweep_id = wandb.sweep(sweep_config, project="sEMG_transformers")
-  wandb.agent(sweep_id, function=train)
+  wandb.init(project="sEMG_transformers", name=f"R{sub_id[args.sub_idx][0][0][0]}", config=args)
+  config = wandb.config
+
+  np.random.seed(config.seed)
+  torch.manual_seed(config.seed)
+
+  train(config, signals, labels, sub_id, sub_skinfold)
