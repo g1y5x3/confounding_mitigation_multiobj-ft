@@ -17,9 +17,10 @@ def load_raw_signals(file):
   return signals, labels, vfi_1, sub_id, sub_skinfold
 
 class sEMGSignalDataset(Dataset):
-  def __init__(self, signals, labels):
+  def __init__(self, signals, labels, skinfolds=None):
     self.signals = signals
     self.labels = labels
+    self.skinfolds = skinfolds
 
   def __len__(self):
     return len(self.labels)
@@ -27,7 +28,11 @@ class sEMGSignalDataset(Dataset):
   def __getitem__(self, idx):
     signal = torch.tensor(self.signals[idx,:,:], dtype=torch.float32)
     label = torch.tensor(self.labels[idx,:], dtype=torch.float32)
-    return signal, label
+    if self.skinfolds is not None:
+      skinfold = torch.tensor(self.skinfolds[idx], dtype=torch.float32)
+      return signal, label, skinfold
+    else:
+      return signal, label
 
 class sEMGtransformer(nn.Module):
   def __init__(self, patch_size=64, d_model=512, nhead=8, dim_feedforward=2048, dropout=0.1, num_layers=1):
@@ -61,12 +66,32 @@ class sEMGtransformer(nn.Module):
 
     x = self.transformer_encoder(x)
 
-    # compare to using only the cls_token, using mean of embedding has a much smoother loss curve
-    # x = x.mean(dim=1)
-    x = x[:,0,:]
+    # returns the class token only
+    return x[:,0,:]
+
+class sEMGSkinfoldPredictor(nn.Module):
+  def __init__(self, emg_transformer, d_model):
+    super().__init__()
+    self.emg_transformer = emg_transformer
+    self.mlp_head = nn.Linear(d_model, 1)
+  
+  def forward(self, x):
+    x = self.emg_transformer(x)
+    x = self.mlp_head(x)
+    x = F.relu(x)
+    return x
+
+class sEMGClassifier(nn.Module):
+  def __init__(self, emg_transformer, d_model):
+    super().__init__()
+    self.emg_transformer = emg_transformer
+    self.mlp_head = nn.Linear(d_model, 2)
+  
+  def forward(self, x):
+    x = self.emg_transformer(x)
     x = self.mlp_head(x)
     return x
-  
+ 
 def count_correct(outputs, targets):
   _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
   _, labels    = torch.max(targets, 1)
@@ -110,61 +135,73 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
   X_train, X_valid = X[train_idx], X[valid_idx]
   Y_train, Y_valid = Y[train_idx], Y[valid_idx]
-  Y_train_cpt = np.argmax(Y_train, axis=1)
   C_train = C[train_idx]
   print(f"X_train {X_train.shape}")
   print(f"X_valid {X_valid.shape}")
   print(f"X_test {X_test.shape}")
 
-  dataset_train = sEMGSignalDataset(X_train, Y_train)
+  dataset_train = sEMGSignalDataset(X_train, Y_train, C_train)
   dataset_valid = sEMGSignalDataset(X_valid, Y_valid)
   dataset_test  = sEMGSignalDataset(X_test, Y_test)
 
-  dataloader_train     = DataLoader(dataset_train, batch_size=config.bsz, shuffle=True)
-  dataloader_train_cpt = DataLoader(dataset_train, batch_size=config.bsz, shuffle=False)
-  dataloader_valid     = DataLoader(dataset_valid, batch_size=config.bsz, shuffle=False)
-  dataloader_test      = DataLoader(dataset_test,  batch_size=config.bsz, shuffle=False)
+  dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=True)
+  dataloader_valid = DataLoader(dataset_valid, batch_size=config.bsz, shuffle=False)
+  dataloader_test  = DataLoader(dataset_test,  batch_size=config.bsz, shuffle=False)
 
-  model = sEMGtransformer(patch_size=config.psz, d_model=config.d_model, nhead=config.nhead, dim_feedforward=config.dim_feedforward,
-                          dropout=config.dropout, num_layers=config.num_layers)
-  model.to("cuda")
+  transformer = sEMGtransformer(patch_size=config.psz, d_model=config.d_model, nhead=config.nhead, dim_feedforward=config.dim_feedforward,
+                                dropout=config.dropout, num_layers=config.num_layers)
+  model_g  = sEMGSkinfoldPredictor(transformer, d_model=config.d_model)
+  model_c = sEMGClassifier(transformer, d_model=config.d_model)
+  model_g.to("cuda")
+  model_c.to("cuda")
 
-  criterion = nn.CrossEntropyLoss()
-  optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
-  scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.step_size, gamma=config.gamma)
-  scaler = torch.cuda.amp.GradScaler()
+  criterion_g = nn.MSELoss()
+  criterion_c = nn.CrossEntropyLoss()
+  optimizer_g = torch.optim.AdamW(model_g.parameters(), lr=config.lr)
+  optimizer_c = torch.optim.AdamW(model_c.parameters(), lr=config.lr)
+  scheduler_g = torch.optim.lr_scheduler.StepLR(optimizer_g, step_size=config.step_size, gamma=config.gamma)
+  scheduler_c = torch.optim.lr_scheduler.StepLR(optimizer_c, step_size=config.step_size, gamma=config.gamma)
+  # scaler = torch.cuda.amp.GradScaler()
 
   accuracy_valid_best = 0
   accuracy_test_best = 0
   model_best = None
-  p_loss = 0
   for epoch in tqdm(range(config.epochs), desc="Training"):
-    loss_train = 0
+    loss_c_train = 0
+    loss_g_train = 0
     correct_train = 0
-    model.train()
-    for batch, (inputs, targets) in enumerate(dataloader_train):
-      inputs, targets = inputs.to("cuda"), targets.to("cuda")
-      optimizer.zero_grad()
-      with torch.autocast(device_type="cuda", dtype=torch.float16):
-        outputs = model(inputs)
-        loss = criterion(outputs, targets) + 2 * p_loss
+    model_g.train()
+    model_c.train()
+    for batch, (inputs, targets, confounds) in enumerate(dataloader_train):
+      inputs, targets, confounds = inputs.to("cuda"), targets.to("cuda"), confounds.to("cuda")
+      optimizer_c.zero_grad()
+      outputs = model_c(inputs)
+      loss_c = criterion_c(outputs, targets)
+      loss_c.backward()
+      optimizer_c.step()
 
-      scaler.scale(loss).backward()
-      scaler.step(optimizer)
-      scaler.update()
-
+      loss_c_train += loss_c.item()
       correct_train += count_correct(outputs, targets)
-      loss_train += loss.item()
 
-    wandb.log({"loss/train": loss_train/len(dataset_train), "accuracy/train": correct_train/len(dataset_train)}, step=epoch)
+      optimizer_g.zero_grad()
+      outputs = model_g(inputs)
+      loss_g = -0.1 * criterion_g(outputs.flatten(), confounds)
+      loss_g.backward()
+      optimizer_g.step()
+
+      loss_g_train += loss_g.item()
+
+    wandb.log({"loss/train-c": loss_c_train/len(dataset_train), 
+               "loss/train-g": loss_g_train/len(dataset_train),
+               "accuracy/train": correct_train/len(dataset_train)}, step=epoch)
 
     loss_valid = 0
     correct_valid = 0
-    model.eval()
+    model_c.eval()
     for inputs, targets in dataloader_valid:
       inputs, targets = inputs.to("cuda"), targets.to("cuda")
-      outputs = model(inputs)
-      loss = criterion(outputs, targets)
+      outputs = model_c(inputs)
+      loss = criterion_c(outputs, targets)
       correct_valid += count_correct(outputs, targets)
       loss_valid += loss.item()
 
@@ -172,36 +209,27 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
     if correct_valid/len(dataset_valid) > accuracy_valid_best: 
       accuracy_valid_best = correct_valid/len(dataset_valid)
-      model_best = copy.deepcopy(model)
+      model_best = copy.deepcopy(model_c)
       correct_test = 0
       for inputs, targets in dataloader_test:
         inputs, targets = inputs.to("cuda"), targets.to("cuda")
-        outputs = model(inputs)
+        outputs = model_c(inputs)
         correct_test += count_correct(outputs, targets)
       accuracy_test_best = correct_test/len(dataset_test)
-      wandb.log({"accuracy/test": correct_test/len(dataset_test)}, step=epoch)
+      wandb.log({"accuracy/test": correct_test/len(dataset_test)})
 
-    # updating p_value_loss
-    Y_pred = []
-    for inputs, targets in dataloader_train_cpt:
-      inputs, targets = inputs.to("cuda"), targets.to("cuda")
-      outputs = model_best(inputs)
-      _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
-      Y_pred.append(predicted.cpu().numpy())
-    Y_pred_cpt = np.concatenate(Y_pred, axis=0)
-    ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
-    wandb.log({"loss/p_value": ret.p}, step=epoch)
-    p_loss = 1 - torch.tensor(ret.p, device="cuda")
-
-    scheduler.step()
+    scheduler_c.step()
+    scheduler_g.step()
   
   print(f"accuracy_valid_best: {accuracy_valid_best}")
   print(f"accuracy_test_best: {accuracy_test_best}")
 
-  # TODO: cpt evaluation, the idea is to backprop directly to the permutated sequences of Cs
+  # cpt evaluation
+  C_train = C[train_idx]
   Y_train_cpt = np.argmax(Y_train, axis=1)
   Y_pred = []
-  for inputs, targets in dataloader_train_cpt:
+  dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=False)
+  for inputs, targets in dataloader_train:
     inputs, targets = inputs.to("cuda"), targets.to("cuda")
     outputs = model_best(inputs)
     _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
@@ -221,7 +249,7 @@ if __name__ == "__main__":
   parser.add_argument('--epochs', type=int, default=500, help="number of epochs")
   parser.add_argument('--bsz', type=int, default=64, help="batch size")
   # optimizer config
-  parser.add_argument('--lr', type=float, default=0.001, help="learning rate")
+  parser.add_argument('--lr', type=float, default=0.0001, help="learning rate")
   parser.add_argument('--wd', type=float, default=0.001, help="weight decay")
   parser.add_argument('--step_size', type=int, default=500, help="lr scheduler step size")
   parser.add_argument('--gamma', type=float, default=0.8, help="lr scheduler gamma")
