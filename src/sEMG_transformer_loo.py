@@ -136,7 +136,6 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
   accuracy_valid_best = 0
   accuracy_test_best = 0
-  model_best = None
   for epoch in tqdm(range(config.epochs), desc="Training"):
     loss_train = 0
     correct_train = 0
@@ -171,7 +170,6 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
     if correct_valid/len(dataset_valid) > accuracy_valid_best: 
       accuracy_valid_best = correct_valid/len(dataset_valid)
-      model_best = copy.deepcopy(model)
       correct_test = 0
       for inputs, targets in dataloader_test:
         inputs, targets = inputs.to("cuda"), targets.to("cuda")
@@ -183,7 +181,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       Y_pred = []
       for inputs, targets in dataloader_train_cpt:
         inputs, targets = inputs.to("cuda"), targets.to("cuda")
-        outputs = model_best(inputs)
+        outputs = model(inputs)
         _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
         Y_pred.append(predicted.cpu().numpy())
       Y_pred_cpt = np.concatenate(Y_pred, axis=0)
@@ -208,7 +206,7 @@ if __name__ == "__main__":
   parser.add_argument('--epochs', type=int, default=500, help="number of epochs")
   parser.add_argument('--bsz', type=int, default=64, help="batch size")
   # optimizer config
-  parser.add_argument('--lr', type=float, default=0.001, help="learning rate")
+  parser.add_argument('--lr', type=float, default=0.0001, help="learning rate")
   parser.add_argument('--wd', type=float, default=0.001, help="weight decay")
   parser.add_argument('--step_size', type=int, default=500, help="lr scheduler step size")
   parser.add_argument('--gamma', type=float, default=0.8, help="lr scheduler gamma")
