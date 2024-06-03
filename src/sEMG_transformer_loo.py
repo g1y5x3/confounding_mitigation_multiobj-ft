@@ -110,6 +110,8 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
   X_train, X_valid = X[train_idx], X[valid_idx]
   Y_train, Y_valid = Y[train_idx], Y[valid_idx]
+  Y_train_cpt = np.argmax(Y_train, axis=1)
+  C_train = C[train_idx]
   print(f"X_train {X_train.shape}")
   print(f"X_valid {X_valid.shape}")
   print(f"X_test {X_test.shape}")
@@ -119,6 +121,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   dataset_test  = sEMGSignalDataset(X_test, Y_test)
 
   dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=True)
+  dataloader_train_cpt = DataLoader(dataset_train, batch_size=config.bsz, shuffle=False)
   dataloader_valid = DataLoader(dataset_valid, batch_size=config.bsz, shuffle=False)
   dataloader_test  = DataLoader(dataset_test,  batch_size=config.bsz, shuffle=False)
 
@@ -175,27 +178,25 @@ def train(config, signals, labels, sub_id, sub_skinfold):
         outputs = model(inputs)
         correct_test += count_correct(outputs, targets)
       accuracy_test_best = correct_test/len(dataset_test)
-      wandb.log({"accuracy/test": correct_test/len(dataset_test)})
+
+      # cpt evaluation
+      Y_pred = []
+      for inputs, targets in dataloader_train_cpt:
+        inputs, targets = inputs.to("cuda"), targets.to("cuda")
+        outputs = model_best(inputs)
+        _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
+        Y_pred.append(predicted.cpu().numpy())
+      Y_pred_cpt = np.concatenate(Y_pred, axis=0)
+      ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
+      wandb.log({"accuracy/test"    : correct_test/len(dataset_test),
+                 "accuracy/p-value" : ret.p}
+                 , step=epoch)
 
     scheduler.step()
   
   print(f"accuracy_valid_best: {accuracy_valid_best}")
   print(f"accuracy_test_best: {accuracy_test_best}")
-
-  # cpt evaluation
-  C_train = C[train_idx]
-  Y_train_cpt = np.argmax(Y_train, axis=1)
-  Y_pred = []
-  dataloader_train = DataLoader(dataset_train, batch_size=config.bsz, shuffle=False)
-  for inputs, targets in dataloader_train:
-    inputs, targets = inputs.to("cuda"), targets.to("cuda")
-    outputs = model_best(inputs)
-    _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
-    Y_pred.append(predicted.cpu().numpy())
-  Y_pred_cpt = np.concatenate(Y_pred, axis=0)
-  ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
   print(f"P-value: {ret.p}")
-  wandb.log({"p-value": ret.p})
 
 
 if __name__ == "__main__":
