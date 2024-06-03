@@ -152,7 +152,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
   transformer = sEMGtransformer(patch_size=config.psz, d_model=config.d_model, nhead=config.nhead, dim_feedforward=config.dim_feedforward,
                                 dropout=config.dropout, num_layers=config.num_layers)
-  model_g  = sEMGSkinfoldPredictor(transformer, d_model=config.d_model)
+  model_g = sEMGSkinfoldPredictor(transformer, d_model=config.d_model)
   model_c = sEMGClassifier(transformer, d_model=config.d_model)
   model_g.to("cuda")
   model_c.to("cuda")
@@ -187,7 +187,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
       optimizer_g.zero_grad()
       outputs = model_g(inputs)
-      loss_g = -10 * criterion_g(outputs.flatten(), confounds)
+      loss_g = -1 * criterion_g(outputs.flatten(), confounds)
       loss_g.backward()
       optimizer_g.step()
 
