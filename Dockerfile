@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
+FROM --platform=linux/amd64 pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
 
 RUN apt-get update && \
     apt-get install -y vim  && \
@@ -17,4 +17,3 @@ RUN apt-get update && \
     pip install tsai && \
     pip install ipykernel
 
-ADD data/subjects_40_v6.mat /workspace/data/
