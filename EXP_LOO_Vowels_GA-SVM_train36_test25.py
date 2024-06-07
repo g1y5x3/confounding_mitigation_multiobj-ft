@@ -83,8 +83,6 @@ if __name__ == "__main__":
               "threads"         : args.thread}
 
     group_name = args.group
-    start_sub  = args.s 
-    num_sub    = args.nsub
 
     X_means = np.load('X_means.npy')
     X_stds = np.load('X_stds.npy')
@@ -122,15 +120,15 @@ if __name__ == "__main__":
                                 progress=False)
     print("P Value:", ret.p)
 
-    wandb.log({"metrics/train_acc" : accuracy_score(label_train_predict, Y_train),
-               "metrics/test_acc"  : accuracy_score(label_test_predict, Y_test),
-               "metrics/p_value"   : ret.p})
+    # wandb.log({"metrics/train_acc" : accuracy_score(label_train_predict, Y_train),
+    #            "metrics/test_acc"  : accuracy_score(label_test_predict, Y_test),
+    #            "metrics/p_value"   : ret.p})
 
     print('Genetic Algorithm Optimization...')
-    num_permu       = wandb.config["permutation"]
-    num_generation  = wandb.config["num_generation"]
-    population_size = wandb.config["population_size"]
-    threads_count   = wandb.config["threads"]
+    num_permu       = config["permutation"]
+    num_generation  = config["num_generation"]
+    population_size = config["population_size"]
+    threads_count   = config["threads"]
 
     n_threads = threads_count
     pool = ThreadPool(n_threads)
@@ -156,18 +154,18 @@ if __name__ == "__main__":
     pool.close()
 
     # Plot the parento front
-    plt.figure()
-    plt.scatter(res.F[:,0], res.F[:,1], marker='o', 
-                                        edgecolors='red', 
-                                        facecolor='None' )
-    plt.xlabel("1-train_acc")
-    plt.ylabel("1-p value")
-    wandb.log({"plots/scatter_plot": wandb.Image(plt)})
+    # plt.figure()
+    # plt.scatter(res.F[:,0], res.F[:,1], marker='o', 
+    #                                     edgecolors='red', 
+    #                                     facecolor='None' )
+    # plt.xlabel("1-train_acc")
+    # plt.ylabel("1-p value")
+    # wandb.log({"plots/scatter_plot": wandb.Image(plt)})
 
     # Log and save the weights
-    fw_dataframe = pd.DataFrame(res.X)
-    fw_table = wandb.Table(dataframe=fw_dataframe)
-    wandb.log({"feature weights": fw_table})
+    # fw_dataframe = pd.DataFrame(res.X)
+    # fw_table = wandb.Table(dataframe=fw_dataframe)
+    # wandb.log({"feature weights": fw_table})
 
     # Evaluate the results discovered by GA
     Xid = np.argsort(res.F[:,0])
@@ -195,9 +193,9 @@ if __name__ == "__main__":
         Y_tf_test = clf.predict(x_test_tf)
         temp_te_acc = accuracy_score(Y_tf_test, Y_test)
 
-        wandb.log({"pareto-front/train_acc": temp_tr_acc,
-                   "pareto-front/p_value"  : temp_p_value,
-                   "pareto-front/test_acc" : temp_te_acc})
+        # wandb.log({"pareto-front/train_acc": temp_tr_acc,
+        #            "pareto-front/p_value"  : temp_p_value,
+        #            "pareto-front/test_acc" : temp_te_acc})
 
         print("\n")
         print("Training Acc after GA: ", temp_tr_acc)
@@ -207,11 +205,9 @@ if __name__ == "__main__":
         if temp_te_acc > acc_best:
             acc_best = temp_te_acc
 
+    # wandb.log({"metrics/train_acc_ga" : training_acc_ga[sub_test],
+    #         "metrics/test_acc_ga"  : testing_acc_ga[sub_test],
+    #         "metrics/p_value_ga"   : p_value_ga[sub_test],
+    #         "metrics/rsquare_ga"   : rsqrd_best})
 
-
-    wandb.log({"metrics/train_acc_ga" : training_acc_ga[sub_test],
-            "metrics/test_acc_ga"  : testing_acc_ga[sub_test],
-            "metrics/p_value_ga"   : p_value_ga[sub_test],
-            "metrics/rsquare_ga"   : rsqrd_best})
-
-    run.finish()
+    # run.finish()
