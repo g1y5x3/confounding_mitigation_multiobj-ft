@@ -211,8 +211,8 @@ if __name__ == "__main__":
             train_acc = temp_p_value
             p_value = temp_p_value
 
-    wandb.log({"metrics/train_acc_ga" : test_acc_best,
-               "metrics/test_acc_ga"  : train_acc,
+    wandb.log({"metrics/train_acc_ga" : train_acc,
+               "metrics/test_acc_ga"  : test_acc_best,
                "metrics/p_value_ga"   : p_value})
 
     wandb.finish()
