@@ -208,7 +208,7 @@ if __name__ == "__main__":
 
         if temp_te_acc > test_acc_best:
             test_acc_best = temp_te_acc
-            train_acc = temp_p_value
+            train_acc = temp_tr_acc
             p_value = temp_p_value
 
     wandb.log({"metrics/train_acc_ga" : train_acc,
