@@ -6,6 +6,15 @@ from torch import nn
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 from mlconfound.stats import partial_confound_test
+from multiprocessing.pool import ThreadPool
+from pymoo.optimize import minimize
+from pymoo.operators.mutation.pm import PM
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.core.problem import StarmapParallelization
+from pymoo.util.display.multi import MultiObjectiveOutput
+from pymoo.operators.sampling.rnd import FloatRandomSampling
+from pymoo.core.problem import ElementwiseProblem
 
 def load_raw_signals(file):
   data = sio.loadmat(file)
@@ -66,6 +75,20 @@ class sEMGtransformer(nn.Module):
     x = x[:,0,:]
     x = self.mlp_head(x)
     return x
+  
+class OptimizeNN(ElementwiseProblem):
+  def __init__(self, n_var=512, n_obj=2, n_constr=0, xl = -1*np.ones(512), xu = 1*np.ones(512), **kwargs):
+    super().__init__(n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl = xl, xu = xu, **kwargs)
+  
+  def load_data(self, x_train, y_train, c_train, clf, perm):
+    self.x_train = x_train
+    self.y_train = y_train
+    self.c_train = c_train
+    self.clf = clf
+    self.perm = perm
+
+  def _evaluate(self, x, out, *args, **kwargs):
+    pass
   
 def count_correct(outputs, targets):
   _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
@@ -181,18 +204,6 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       accuracy_test_best = correct_test/len(dataset_test)
       wandb.log({"accuracy/test": correct_test/len(dataset_test)}, step=epoch)
 
-    # updating p_value_loss
-    Y_pred = []
-    for inputs, targets in dataloader_train_cpt:
-      inputs, targets = inputs.to("cuda"), targets.to("cuda")
-      outputs = model_best(inputs)
-      _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
-      Y_pred.append(predicted.cpu().numpy())
-    Y_pred_cpt = np.concatenate(Y_pred, axis=0)
-    ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
-    wandb.log({"loss/p_value": ret.p}, step=epoch)
-    p_loss = 1 - torch.tensor(ret.p, device="cuda")
-
     scheduler.step()
   
   print(f"accuracy_valid_best: {accuracy_valid_best}")
@@ -211,6 +222,42 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   print(f"P-value: {ret.p}")
   wandb.log({"p-value": ret.p})
 
+  with torch.no_grad():
+    print(model_best.mlp_head.weight.shape)
+    print(model_best.mlp_head.weight.max().cpu().numpy())
+    print(model_best.mlp_head.weight.min().cpu().numpy())
+    xl = np.ones(512) * model_best.mlp_head.weight.min().cpu().numpy()
+    xu = np.ones(512) * model_best.mlp_head.weight.max().cpu().numpy()
+
+  # with torch.no_grad():
+  #   # Apply CPT to modify the decision boundry
+  #   print('Genetic Algorithm Optimization...')
+  #   num_perm = config["permutation"]
+  #   num_gen  = config["num_generation"]
+  #   pop_size = config["population_size"]
+  #   threads  = config["threads"]
+
+  #   pool = ThreadPool(threads)
+  #   runner = StarmapParallelization(pool.starmap)
+
+  #   problem = MyProblem(elementwise_runner=runner)
+  #   problem.load_data_svm(X_train, Y_train, C_train, clf, num_perm)
+
+  #   # Genetic algorithm initialization
+  #   algorithm = NSGA2(pop_size  = pop_size,
+  #                     sampling  = FloatRandomSampling(),
+  #                     crossover = SBX(eta=15, prob=0.9),
+  #                     mutation  = PM(eta=20),
+  #                     output    = MultiObjectiveOutput())
+
+  #   res = minimize(problem,
+  #                  algorithm,
+  #                  ("n_gen", num_gen),
+  #                  verbose=True)
+
+  #   print('Completed! ', res.exec_time)
+  #   pool.close()
+ 
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
@@ -232,6 +279,11 @@ if __name__ == "__main__":
   parser.add_argument('--dim_feedforward', type=int, default=1024, help="transformer feed-forward dim")
   parser.add_argument('--num_layers', type=int, default=3, help="number of transformer encoder layers")
   parser.add_argument('--dropout', type=float, default=0.3, help="dropout rate")
+  # genetic algorithm config
+  parser.add_argument('--ngen', type=int, default=1, help="Number of generation")
+  parser.add_argument('--pop', type=int, default=64, help='Population size')
+  parser.add_argument('--perm', type=int, default=100, help='Permutation value')
+  parser.add_argument('--thread', type=int, default=8, help='Number of threads')
   args = parser.parse_args()
 
   # load data
