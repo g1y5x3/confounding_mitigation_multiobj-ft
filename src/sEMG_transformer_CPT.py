@@ -268,8 +268,9 @@ def train(config, signals, labels, sub_id, sub_skinfold):
     # Evaluate the results from GA optimization
     # TODO: save this numpy array as pickle
     print(res.X.shape)
+    print(res.X[0,:].shape)
     for i in range(len(res.X)):
-      weight = torch.tensor(X[i,:], dtype=torch.float32, device="cuda")
+      weight = torch.tensor(res.X[i,:], dtype=torch.float32, device="cuda")
       print(weight.shape)
       model_copy = copy.deepcopy(model)
       model_copy.mlp_head.weight.data = weight
