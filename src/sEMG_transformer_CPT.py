@@ -81,29 +81,30 @@ class OptimizeMLPLayer(ElementwiseProblem):
   def __init__(self, n_var=512, n_obj=2, n_constr=0, xl = -1*np.ones(512), xu = 1*np.ones(512), **kwargs):
     super().__init__(n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl = xl, xu = xu, **kwargs)
   
-  def load_data(self, x_train, y_train, c_train, clf, perm):
+  def load_data(self, x_train, y_train, y_train_cpt, c_train, clf, perm):
     self.clf = clf.to("cuda")
     self.x_train = torch.tensor(x_train, dtype=torch.float, device="cuda")
     self.y_train = torch.tensor(y_train, dtype=torch.float, device="cuda")
+    self.y_train_cpt = y_train_cpt
     self.criterion = nn.CrossEntropyLoss()
     self.c_train = c_train
     self.perm = perm
-    print(self.clf)
 
   def _evaluate(self, x, out, *args, **kwargs):
     with torch.no_grad():
-      print(x[:10])
       weight = torch.tensor(x.reshape((2,256)), dtype=torch.float, device="cuda")
       clf_copy = deepcopy(self.clf)
       clf_copy.mlp_head.weight.data = weight
       output = clf_copy(self.x_train)
       cross_entropy_loss = self.criterion(output, self.y_train)
-      print(cross_entropy_loss)
+      print(f"cross entropy {cross_entropy_loss.to('cpu').numpy()}")
 
       _, predicted = torch.max(F.softmax(output, dim=1), 1)
-      print(predicted)
+      y_pred_cpt = np.array(predicted.to("cpu"))
+      ret = partial_confound_test(self.y_train_cpt, y_pred_cpt, self.c_train, cat_y=True, cat_yhat=True, cat_c=False, progress=False)
+      print(f"p value {ret.p}")
 
-      out['F'] = [0.5, 0.5]
+      out['F'] = [cross_entropy_loss.to("cpu").numpy(), 1 - ret.p]
   
 def count_correct(outputs, targets):
   _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
@@ -247,7 +248,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
     pool = ThreadPool(config.thread)
     runner = StarmapParallelization(pool.starmap)
     problem = OptimizeMLPLayer(elementwise_runner=runner)
-    problem.load_data(X_train, Y_train, C_train, model_best, config.perm)
+    problem.load_data(X_train, Y_train, Y_train_cpt, C_train, model_best, config.perm)
 
     # Genetic algorithm initialization
     algorithm = NSGA2(pop_size  = config.pop,
@@ -287,8 +288,8 @@ if __name__ == "__main__":
   parser.add_argument('--dropout', type=float, default=0.3, help="dropout rate")
   # genetic algorithm config
   parser.add_argument('--ngen', type=int, default=4, help="Number of generation")
-  parser.add_argument('--pop', type=int, default=4, help='Population size')
-  parser.add_argument('--thread', type=int, default=2, help='Number of threads')
+  parser.add_argument('--pop', type=int, default=32, help='Population size')
+  parser.add_argument('--thread', type=int, default=4, help='Number of threads')
   parser.add_argument('--perm', type=int, default=100, help='Permutation value')
   args = parser.parse_args()
 
