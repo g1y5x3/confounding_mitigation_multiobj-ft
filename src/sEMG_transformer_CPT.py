@@ -97,12 +97,10 @@ class OptimizeMLPLayer(ElementwiseProblem):
       clf_copy.mlp_head.weight.data = weight
       output = clf_copy(self.x_train)
       cross_entropy_loss = self.criterion(output, self.y_train)
-      # print(f"cross entropy {cross_entropy_loss.to('cpu').numpy()}")
 
       _, predicted = torch.max(F.softmax(output, dim=1), 1)
       y_pred_cpt = np.array(predicted.to("cpu"))
       ret = partial_confound_test(self.y_train_cpt, y_pred_cpt, self.c_train, cat_y=True, cat_yhat=True, cat_c=False, progress=False)
-      # print(f"p value {ret.p}")
 
       out['F'] = [cross_entropy_loss.to("cpu").numpy(), 1-ret.p]
   
@@ -270,11 +268,12 @@ def train(config, signals, labels, sub_id, sub_skinfold):
     print(res.X.shape)
     print(res.X[0,:].shape)
     for i in range(len(res.X)):
-      weight = torch.tensor(res.X[i,:], dtype=torch.float32, device="cuda")
+      weight = torch.tensor(res.X[i,:].reshape((2,256)), dtype=torch.float32, device="cuda")
       print(weight.shape)
       model_copy = copy.deepcopy(model)
       model_copy.mlp_head.weight.data = weight
 
+      # re-calcualte training accuracy and p-value 
       correct_train = 0
       Y_pred = []
       for inputs, targets in dataloader_train_cpt:
@@ -290,6 +289,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
       print(f"P-value: {ret.p}")
 
+      # re-calculate testing accuracy
  
 
 if __name__ == "__main__":
