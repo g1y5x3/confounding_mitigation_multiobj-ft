@@ -97,14 +97,14 @@ class OptimizeMLPLayer(ElementwiseProblem):
       clf_copy.mlp_head.weight.data = weight
       output = clf_copy(self.x_train)
       cross_entropy_loss = self.criterion(output, self.y_train)
-      print(f"cross entropy {cross_entropy_loss.to('cpu').numpy()}")
+      # print(f"cross entropy {cross_entropy_loss.to('cpu').numpy()}")
 
       _, predicted = torch.max(F.softmax(output, dim=1), 1)
       y_pred_cpt = np.array(predicted.to("cpu"))
       ret = partial_confound_test(self.y_train_cpt, y_pred_cpt, self.c_train, cat_y=True, cat_yhat=True, cat_c=False, progress=False)
-      print(f"p value {ret.p}")
+      # print(f"p value {ret.p}")
 
-      out['F'] = [cross_entropy_loss.to("cpu").numpy(), 1 - ret.p]
+      out['F'] = [cross_entropy_loss.to("cpu").numpy(), 1-ret.p]
   
 def count_correct(outputs, targets):
   _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
@@ -239,9 +239,8 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
   with torch.no_grad():
     print('Genetic Algorithm Optimization...')
-    print(model_best.mlp_head.weight.shape)
-    print(model_best.mlp_head.weight.max().cpu().numpy())
-    print(model_best.mlp_head.weight.min().cpu().numpy())
+
+    # test with boundries
     xl = np.ones(512) * model_best.mlp_head.weight.min().cpu().numpy()
     xu = np.ones(512) * model_best.mlp_head.weight.max().cpu().numpy()
 
@@ -264,6 +263,32 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
     print('Completed! ', res.exec_time)
     pool.close()
+    print(res.F)
+
+    # Evaluate the results from GA optimization
+    # TODO: save this numpy array as pickle
+    print(res.X.shape)
+    for i in range(len(res.X)):
+      weight = torch.tensor(X[i,:], dtype=torch.float32, device="cuda")
+      print(weight.shape)
+      model_copy = copy.deepcopy(model)
+      model_copy.mlp_head.weight.data = weight
+
+      correct_train = 0
+      Y_pred = []
+      for inputs, targets in dataloader_train_cpt:
+        inputs, targets = inputs.to("cuda"), targets.to("cuda")
+        outputs = model_copy(inputs)
+        correct_train += count_correct(outputs, targets) 
+        _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
+        Y_pred.append(predicted.cpu().numpy())
+
+      print(f"Accuracy: {correct_train/len(dataset_train)}")
+
+      Y_pred_cpt = np.concatenate(Y_pred, axis=0)
+      ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
+      print(f"P-value: {ret.p}")
+
  
 
 if __name__ == "__main__":
