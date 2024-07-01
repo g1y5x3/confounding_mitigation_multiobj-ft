@@ -4,6 +4,7 @@ import scipy.io as sio
 import torch.nn.functional as F
 from torch import nn
 from tqdm import tqdm
+from copy import deepcopy
 from torch.utils.data import Dataset, DataLoader
 from mlconfound.stats import partial_confound_test
 from multiprocessing.pool import ThreadPool
@@ -81,20 +82,28 @@ class OptimizeMLPLayer(ElementwiseProblem):
     super().__init__(n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl = xl, xu = xu, **kwargs)
   
   def load_data(self, x_train, y_train, c_train, clf, perm):
-    self.clf = clf.to("cpu")
-    self.x_train = torch.tensor(x_train, dtype=torch.float, device="cpu")
-    self.y_train = torch.tensor(y_train, dtype=torch.float, device="cpu")
+    self.clf = clf.to("cuda")
+    self.x_train = torch.tensor(x_train, dtype=torch.float, device="cuda")
+    self.y_train = torch.tensor(y_train, dtype=torch.float, device="cuda")
+    self.criterion = nn.CrossEntropyLoss()
     self.c_train = c_train
     self.perm = perm
     print(self.clf)
-    print(self.x_train)
-    print(self.y_train)
 
   def _evaluate(self, x, out, *args, **kwargs):
-    # clf_temp = self.clf.to("cuda")
-    output = self.clf(self.x_train)
-    print(output)
-    pass
+    with torch.no_grad():
+      print(x[:10])
+      weight = torch.tensor(x.reshape((2,256)), dtype=torch.float, device="cuda")
+      clf_copy = deepcopy(self.clf)
+      clf_copy.mlp_head.weight.data = weight
+      output = clf_copy(self.x_train)
+      cross_entropy_loss = self.criterion(output, self.y_train)
+      print(cross_entropy_loss)
+
+      _, predicted = torch.max(F.softmax(output, dim=1), 1)
+      print(predicted)
+
+      out['F'] = [0.5, 0.5]
   
 def count_correct(outputs, targets):
   _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
@@ -166,7 +175,6 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   accuracy_valid_best = 0
   accuracy_test_best = 0
   model_best = None
-  p_loss = 0
   for epoch in tqdm(range(config.epochs), desc="Training"):
     loss_train = 0
     correct_train = 0
@@ -176,7 +184,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       optimizer.zero_grad()
       with torch.autocast(device_type="cuda", dtype=torch.float16):
         outputs = model(inputs)
-        loss = criterion(outputs, targets) + 2 * p_loss
+        loss = criterion(outputs, targets)
 
       scaler.scale(loss).backward()
       scaler.step(optimizer)
@@ -278,10 +286,10 @@ if __name__ == "__main__":
   parser.add_argument('--num_layers', type=int, default=3, help="number of transformer encoder layers")
   parser.add_argument('--dropout', type=float, default=0.3, help="dropout rate")
   # genetic algorithm config
-  parser.add_argument('--ngen', type=int, default=1, help="Number of generation")
-  parser.add_argument('--pop', type=int, default=64, help='Population size')
+  parser.add_argument('--ngen', type=int, default=4, help="Number of generation")
+  parser.add_argument('--pop', type=int, default=4, help='Population size')
+  parser.add_argument('--thread', type=int, default=2, help='Number of threads')
   parser.add_argument('--perm', type=int, default=100, help='Permutation value')
-  parser.add_argument('--thread', type=int, default=8, help='Number of threads')
   args = parser.parse_args()
 
   # load data
