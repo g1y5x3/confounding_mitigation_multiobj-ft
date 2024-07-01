@@ -76,18 +76,24 @@ class sEMGtransformer(nn.Module):
     x = self.mlp_head(x)
     return x
   
-class OptimizeNN(ElementwiseProblem):
+class OptimizeMLPLayer(ElementwiseProblem):
   def __init__(self, n_var=512, n_obj=2, n_constr=0, xl = -1*np.ones(512), xu = 1*np.ones(512), **kwargs):
     super().__init__(n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl = xl, xu = xu, **kwargs)
   
   def load_data(self, x_train, y_train, c_train, clf, perm):
-    self.x_train = x_train
-    self.y_train = y_train
+    self.clf = clf.to("cpu")
+    self.x_train = torch.tensor(x_train, dtype=torch.float, device="cpu")
+    self.y_train = torch.tensor(y_train, dtype=torch.float, device="cpu")
     self.c_train = c_train
-    self.clf = clf
     self.perm = perm
+    print(self.clf)
+    print(self.x_train)
+    print(self.y_train)
 
   def _evaluate(self, x, out, *args, **kwargs):
+    # clf_temp = self.clf.to("cuda")
+    output = self.clf(self.x_train)
+    print(output)
     pass
   
 def count_correct(outputs, targets):
@@ -223,40 +229,32 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   wandb.log({"p-value": ret.p})
 
   with torch.no_grad():
+    print('Genetic Algorithm Optimization...')
     print(model_best.mlp_head.weight.shape)
     print(model_best.mlp_head.weight.max().cpu().numpy())
     print(model_best.mlp_head.weight.min().cpu().numpy())
     xl = np.ones(512) * model_best.mlp_head.weight.min().cpu().numpy()
     xu = np.ones(512) * model_best.mlp_head.weight.max().cpu().numpy()
 
-  # with torch.no_grad():
-  #   # Apply CPT to modify the decision boundry
-  #   print('Genetic Algorithm Optimization...')
-  #   num_perm = config["permutation"]
-  #   num_gen  = config["num_generation"]
-  #   pop_size = config["population_size"]
-  #   threads  = config["threads"]
+    pool = ThreadPool(config.thread)
+    runner = StarmapParallelization(pool.starmap)
+    problem = OptimizeMLPLayer(elementwise_runner=runner)
+    problem.load_data(X_train, Y_train, C_train, model_best, config.perm)
 
-  #   pool = ThreadPool(threads)
-  #   runner = StarmapParallelization(pool.starmap)
+    # Genetic algorithm initialization
+    algorithm = NSGA2(pop_size  = config.pop,
+                      sampling  = FloatRandomSampling(),
+                      crossover = SBX(eta=15, prob=0.9),
+                      mutation  = PM(eta=20),
+                      output    = MultiObjectiveOutput())
 
-  #   problem = MyProblem(elementwise_runner=runner)
-  #   problem.load_data_svm(X_train, Y_train, C_train, clf, num_perm)
+    res = minimize(problem,
+                   algorithm,
+                   ("n_gen", config.ngen),
+                   verbose=True)
 
-  #   # Genetic algorithm initialization
-  #   algorithm = NSGA2(pop_size  = pop_size,
-  #                     sampling  = FloatRandomSampling(),
-  #                     crossover = SBX(eta=15, prob=0.9),
-  #                     mutation  = PM(eta=20),
-  #                     output    = MultiObjectiveOutput())
-
-  #   res = minimize(problem,
-  #                  algorithm,
-  #                  ("n_gen", num_gen),
-  #                  verbose=True)
-
-  #   print('Completed! ', res.exec_time)
-  #   pool.close()
+    print('Completed! ', res.exec_time)
+    pool.close()
  
 
 if __name__ == "__main__":
