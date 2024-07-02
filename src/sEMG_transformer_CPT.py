@@ -76,11 +76,11 @@ class sEMGtransformer(nn.Module):
     x = x[:,0,:]
     x = self.mlp_head(x)
     return x
-  
+
 class OptimizeMLPLayer(ElementwiseProblem):
   def __init__(self, n_var=512, n_obj=2, n_constr=0, xl = -1*np.ones(512), xu = 1*np.ones(512), **kwargs):
     super().__init__(n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl = xl, xu = xu, **kwargs)
-  
+
   def load_data(self, x_train, y_train, y_train_cpt, c_train, clf, perm):
     self.clf = clf.to("cuda")
     self.x_train = torch.tensor(x_train, dtype=torch.float, device="cuda")
@@ -103,7 +103,7 @@ class OptimizeMLPLayer(ElementwiseProblem):
       ret = partial_confound_test(self.y_train_cpt, y_pred_cpt, self.c_train, cat_y=True, cat_yhat=True, cat_c=False, progress=False)
 
       out['F'] = [cross_entropy_loss.to("cpu").numpy(), 1-ret.p]
-  
+
 def count_correct(outputs, targets):
   _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
   _, labels    = torch.max(targets, 1)
@@ -171,6 +171,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.step_size, gamma=config.gamma)
   scaler = torch.cuda.amp.GradScaler()
 
+  accuracy_train_best = 0
   accuracy_valid_best = 0
   accuracy_test_best = 0
   model_best = None
@@ -206,7 +207,8 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
     wandb.log({"loss/valid": loss_valid/len(dataset_valid), "accuracy/valid": correct_valid/len(dataset_valid)}, step=epoch)
 
-    if correct_valid/len(dataset_valid) > accuracy_valid_best: 
+    if correct_valid/len(dataset_valid) > accuracy_valid_best:
+      accuracy_train_best = correct_train/len(dataset_train)
       accuracy_valid_best = correct_valid/len(dataset_valid)
       model_best = copy.deepcopy(model)
       correct_test = 0
@@ -218,11 +220,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       wandb.log({"accuracy/test": correct_test/len(dataset_test)}, step=epoch)
 
     scheduler.step()
-  
-  print(f"accuracy_valid_best: {accuracy_valid_best}")
-  print(f"accuracy_test_best: {accuracy_test_best}")
 
-  # TODO: cpt evaluation, the idea is to backprop directly to the permutated sequences of Cs
   Y_train_cpt = np.argmax(Y_train, axis=1)
   Y_pred = []
   for inputs, targets in dataloader_train_cpt:
@@ -232,8 +230,16 @@ def train(config, signals, labels, sub_id, sub_skinfold):
     Y_pred.append(predicted.cpu().numpy())
   Y_pred_cpt = np.concatenate(Y_pred, axis=0)
   ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
+
+  print(f"accuracy_train_best: {accuracy_train_best}")
   print(f"P-value: {ret.p}")
-  wandb.log({"p-value": ret.p})
+  print(f"accuracy_valid_best: {accuracy_valid_best}")
+  print(f"accuracy_test_best:  {accuracy_test_best}")
+
+  wandb.log({"result/p-value": ret.p,
+             "result/training": accuracy_train_best,
+             "result/validation": accuracy_valid_best,
+             "result/training": accuracy_test_best})
 
   with torch.no_grad():
     print('Genetic Algorithm Optimization...')
@@ -264,33 +270,60 @@ def train(config, signals, labels, sub_id, sub_skinfold):
     print(res.F)
 
     # Evaluate the results from GA optimization
-    # TODO: save this numpy array as pickle
-    print(res.X.shape)
-    print(res.X[0,:].shape)
+    accuracy_train_best_cpt = 0
+    accuracy_valid_best_cpt = 0
+    accuracy_test_best_cpt = 0
+    p_value_best_cpt = 0
     for i in range(len(res.X)):
       weight = torch.tensor(res.X[i,:].reshape((2,256)), dtype=torch.float32, device="cuda")
-      print(weight.shape)
       model_copy = copy.deepcopy(model)
       model_copy.mlp_head.weight.data = weight
+      model_copy.eval()
 
-      # re-calcualte training accuracy and p-value 
+      # re-calcualte training accuracy and p-value
       correct_train = 0
       Y_pred = []
       for inputs, targets in dataloader_train_cpt:
         inputs, targets = inputs.to("cuda"), targets.to("cuda")
         outputs = model_copy(inputs)
-        correct_train += count_correct(outputs, targets) 
+        correct_train += count_correct(outputs, targets)
         _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
         Y_pred.append(predicted.cpu().numpy())
 
-      print(f"Accuracy: {correct_train/len(dataset_train)}")
-
+      print(f"\nTraining Accuracy: {correct_train/len(dataset_train)}")
       Y_pred_cpt = np.concatenate(Y_pred, axis=0)
-      ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
+      ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False, progress=False)
       print(f"P-value: {ret.p}")
 
+      # re-calculate validation accuracy
+      correct_valid = 0
+      for inputs, targets in dataloader_valid:
+        inputs, targets = inputs.to("cuda"), targets.to("cuda")
+        outputs = model_copy(inputs)
+        correct_valid += count_correct(outputs, targets)
+
+      print(f"Validation Accuracy: {correct_valid/len(dataset_valid)}")
+
       # re-calculate testing accuracy
- 
+      correct_test = 0
+      for inputs, targets in dataloader_test:
+        inputs, targets = inputs.to("cuda"), targets.to("cuda")
+        outputs = model_copy(inputs)
+        correct_test += count_correct(outputs, targets)
+
+      print(f"Testing Accuracy: {correct_test/len(dataset_test)}")
+
+      if correct_test/len(dataset_test) > accuracy_test_best_cpt:
+        accuracy_test_best_cpt = correct_test/len(dataset_test)
+        accuracy_train_best_cpt = correct_train/len(dataset_train)
+        accuracy_valid_best_cpt = correct_valid/len(dataset_valid)
+        p_value_best_cpt = ret.p
+
+  wandb.log({"result/p-value-cpt": p_value_best_cpt,
+             "result/training-cpt": accuracy_train_best_cpt,
+             "result/validation-cpt": accuracy_valid_best_cpt,
+             "result/training-cpt": accuracy_test_best_cpt})
+
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="sEMG transformer training configurations")
