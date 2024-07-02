@@ -239,7 +239,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   wandb.log({"result/p-value": ret.p,
              "result/training": accuracy_train_best,
              "result/validation": accuracy_valid_best,
-             "result/training": accuracy_test_best})
+             "result/testing": accuracy_test_best})
 
   with torch.no_grad():
     print('Genetic Algorithm Optimization...')
@@ -322,7 +322,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   wandb.log({"result/p-value-cpt": p_value_best_cpt,
              "result/training-cpt": accuracy_train_best_cpt,
              "result/validation-cpt": accuracy_valid_best_cpt,
-             "result/training-cpt": accuracy_test_best_cpt})
+             "result/testing-cpt": accuracy_test_best_cpt})
 
 
 if __name__ == "__main__":
@@ -362,3 +362,5 @@ if __name__ == "__main__":
   torch.manual_seed(config.seed)
 
   train(config, signals, labels, sub_id, sub_skinfold)
+
+  wandb.finish()
