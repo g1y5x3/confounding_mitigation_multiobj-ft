@@ -1,16 +1,11 @@
-import os
-import wandb
-import argparse
-import torch
+import os, wandb, argparse, requests, torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch import nn, optim
 from torch.utils.data import DataLoader
-
 from torchinfo import summary
 from tqdm import trange
-from sfcn import SFCN
-from imageloader import IXIDataset, CenterRandomShift, RandomMirror
+from util.fMRIImageLoader import IXIDataset, CenterRandomShift, RandomMirror
 
 WANDB = os.getenv("WANDB", False)
 GROUP = os.getenv("GROUP", "tests")
@@ -18,6 +13,65 @@ NAME  = os.getenv("NAME" , "test")
 
 DATA_DIR   = os.getenv("DATA_DIR",   "data/IXI_4x4x4")
 DATA_SPLIT = os.getenv("DATA_SPLIT", "all")
+
+class SFCN(nn.Module):
+  def __init__(self, channel_number=[32, 64, 128, 256, 256, 64], output_dim=40, dropout=True):
+    super(SFCN, self).__init__()
+    n_layer = len(channel_number)
+
+    self.feature_extractor = nn.Sequential()
+    for i in range(n_layer):
+      in_channel = 1 if i == 0 else channel_number[i-1] 
+      out_channel = channel_number[i]
+      if i < n_layer-1:
+        self.feature_extractor.add_module(f"conv_{i}",
+                                          self.conv_layer(in_channel,
+                                                          out_channel,
+                                                          maxpool=True,
+                                                          kernel_size=3,
+                                                          padding=1))
+      else:
+        self.feature_extractor.add_module(f"conv_{i}",
+                                          self.conv_layer(in_channel,
+                                                          out_channel,
+                                                          maxpool=False,
+                                                          kernel_size=1,
+                                                          padding=0))
+
+    self.classifier = nn.Sequential()
+    # NOTE initial model uses a average pool here
+    if dropout: self.classifier.add_module('dropout', nn.Dropout(0.5))
+    i = n_layer
+    # TODO calculate or ask user to provide the dim size of handcoding it
+    # otherwise this would have to change depends on the input image size
+    in_channel = channel_number[-1]*2*2*2
+    out_channel = output_dim
+    self.classifier.add_module(f"fc_{i}", nn.Linear(in_channel, out_channel))
+
+  @staticmethod
+  def conv_layer(in_channel, out_channel, maxpool=True, kernel_size=3, padding=0, maxpool_stride=2):
+    if maxpool is True:
+      layer = nn.Sequential(
+        nn.Conv3d(in_channel, out_channel, padding=padding, kernel_size=kernel_size),
+        nn.BatchNorm3d(out_channel),
+        nn.MaxPool3d(2, stride=maxpool_stride),
+        nn.ReLU(),
+      )
+    else:
+      layer = nn.Sequential(
+        nn.Conv3d(in_channel, out_channel, padding=padding, kernel_size=kernel_size),
+        nn.BatchNorm3d(out_channel),
+        nn.ReLU()
+      )
+    return layer
+
+  def forward(self, x):
+    x = self.feature_extractor(x)
+    x = x.view(x.size(0), -1)
+    x = self.classifier(x)
+    x = F.softmax(x, dim=1)
+    return x
+
 
 def train(config, run=None):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -53,8 +107,16 @@ def train(config, run=None):
   model = SFCN(output_dim=y.shape[1])
   print(f"\nModel Dtype: {next(model.parameters()).dtype}")
   summary(model, x.shape)
-  # load pretrained weights from https://github.com/ha-ha-ha-han/UKBiobank_deep_pretrain/raw/master/brain_age/run_20190719_00_epoch_best_mae.p
-  w_pretrained = torch.load("model/run_20190719_00_epoch_best_mae.p")
+
+  # load pretrained weights shared by the original author
+  url = "https://github.com/ha-ha-ha-han/UKBiobank_deep_pretrain/raw/master/brain_age/run_20190719_00_epoch_best_mae.p"
+  filename = "run_20190719_00_epoch_best_mae.pth" 
+  if not os.path.exists(filename):
+    response = requests.get(url)
+    with open("run_20190719_00_epoch_best_mae.pth", "wb") as file:
+      file.write(response.content)
+
+  w_pretrained = torch.load("run_20190719_00_epoch_best_mae.pth")
   w_feature_extractor = {k: v for k, v in w_pretrained.items() if "module.classifier" not in k}
   model.load_state_dict(w_feature_extractor, strict=False)
   
@@ -114,20 +176,20 @@ def train(config, run=None):
     scheduler.step()
   
     t.set_description(f"Training: train/loss {loss_train:.2f}, train/MAE_age {MAE_age_train:.2f} test/loss {loss_test:.2f}, test/MAE_age {MAE_age_test:.2f}")
-    if run:
-      wandb.log({"train/loss": loss_train,
-                 "train/MAE_age": MAE_age_train,
-                 "test/loss":  loss_test,
-                 "test/MAE_age":  MAE_age_test,
-                 })
+
+    wandb.log({"train/loss": loss_train,
+               "train/MAE_age": MAE_age_train,
+               "test/loss":  loss_test,
+               "test/MAE_age":  MAE_age_test,
+               })
   
   # Save and upload the trained model 
-  torch.save(model.state_dict(), "model/model.pth")
-  if run:
-    artifact = wandb.Artifact("model", type="model")
-    artifact.add_file("model/model.pth")
-    run.log_artifact(artifact)
-    run.finish()
+  torch.save(model.state_dict(), "model.pth")
+
+  artifact = wandb.Artifact("model", type="model")
+  artifact.add_file("model.pth")
+  run.log_artifact(artifact)
+  run.finish()
 
   return loss_test, MAE_age_test
 
@@ -144,15 +206,6 @@ if __name__ == "__main__":
   args = parser.parse_args()
   config = vars(args)
 
-  if WANDB:
-    # TODO need to pass project/group without using argparse
-    run = wandb.init(
-      project = "Confounding-in-fMRI-Deep-Learning",
-      name    = NAME,
-      group   = GROUP,
-      config  = config
-    )
-  else:
-    run = None
-  
+  run = wandb.init(project="fMRI-ConvNets", name=NAME, group=GROUP, config=config)
+
   train(config, run)
