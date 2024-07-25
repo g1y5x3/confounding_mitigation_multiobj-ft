@@ -10,6 +10,11 @@ from util.fMRIImageLoader import IXIDataset, CenterRandomShift, RandomMirror
 DATA_DIR   = os.getenv("DATA_DIR",   "data/IXI_4x4x4")
 DATA_SPLIT = os.getenv("DATA_SPLIT", "all")
 
+def generate_wandb_name(config):
+  train_sites = '_'.join(sorted(config['site_train']))
+  test_sites = '_'.join(sorted(config['site_test']))
+  return f"train_{train_sites}_test_{test_sites}"
+
 class SFCN(nn.Module):
   def __init__(self, channel_number=[32, 64, 128, 256, 256, 64], output_dim=40, dropout=True):
     super(SFCN, self).__init__()
@@ -220,9 +225,16 @@ if __name__ == "__main__":
   parser.add_argument("--wd", type=float, default=1e-3, help="weight decay")
   parser.add_argument("--step_size", type=int,   default=30,   help="step size")
   parser.add_argument("--gamma", type=float, default=0.3,  help="gamma")
+  # specify training and testing site
+  parser.add_argument("--site_train", nargs='+', default=["Guys", "HH", "IOP"], 
+                      help="List of sites for training data (e.g., --site_train Guys HH)")
+  parser.add_argument("--site_test", nargs='+', default=["Guys", "HH", "IOP"], 
+                      help="List of sites for testing data (e.g., --site_test IOP)")
   args = parser.parse_args()
   config = vars(args)
 
-  run = wandb.init(project="fMRI-ConvNets", config=config)
+  wandb_name = generate_wandb_name(config)
+
+  run = wandb.init(project="fMRI-ConvNets", name=wandb_name, config=config)
 
   train(config, run)
