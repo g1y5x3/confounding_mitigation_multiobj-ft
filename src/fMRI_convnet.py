@@ -7,10 +7,6 @@ from torchinfo import summary
 from tqdm import trange
 from util.fMRIImageLoader import IXIDataset, CenterRandomShift, RandomMirror
 
-WANDB = os.getenv("WANDB", False)
-GROUP = os.getenv("GROUP", "tests")
-NAME  = os.getenv("NAME" , "test")
-
 DATA_DIR   = os.getenv("DATA_DIR",   "data/IXI_4x4x4")
 DATA_SPLIT = os.getenv("DATA_SPLIT", "all")
 
@@ -85,12 +81,24 @@ def train(config, run=None):
   # based on the paper the training inputs are 
   # 1) randomly shifted by 0, 1, or 2 voxels along every axis; 
   # 2) has a probability of 50% to be mirrored about the sagittal plane
-  data_train = IXIDataset(data_dir=DATA_DIR, label_file=f"IXI_{DATA_SPLIT}_train.csv", bin_range=bin_range, transform=[CenterRandomShift(randshift=True), RandomMirror()])
-  data_test  = IXIDataset(data_dir=DATA_DIR, label_file=f"IXI_{DATA_SPLIT}_test.csv",  bin_range=bin_range, transform=[CenterRandomShift(randshift=False)])
+  # site_test = ["Guys", "HH", "IOP"]
+  site_train = ["Guys", "HH"]
+  data_train = IXIDataset(data_dir=DATA_DIR, label_file=f"IXI_{DATA_SPLIT}_train.csv",
+                          sites=site_train,
+                          bin_range=bin_range, 
+                          transform=[CenterRandomShift(randshift=True), RandomMirror()])
+
+  # site_test = ["Guys", "HH", "IOP"]
+  site_test = ["IOP"]
+  data_test = IXIDataset(data_dir=DATA_DIR, label_file=f"IXI_{DATA_SPLIT}_test.csv",  
+                         sites=site_test, 
+                         bin_range=bin_range,
+                         transform=[CenterRandomShift(randshift=False)])
+
   bin_center = data_train.bin_center.reshape([-1,1])
 
-  dataloader_train = DataLoader(data_train, batch_size=config["batch_size"], num_workers=config["num_workers"], pin_memory=True, shuffle=True)
-  dataloader_test  = DataLoader(data_test,  batch_size=config["batch_size"], num_workers=config["num_workers"], pin_memory=True, shuffle=False)
+  dataloader_train = DataLoader(data_train, batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=True)
+  dataloader_test  = DataLoader(data_test,  batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=False)
   
   x, y = next(iter(dataloader_train))
   print("\nTraining data summary:")
@@ -130,7 +138,9 @@ def train(config, run=None):
   model.to(device)
   bin_center = bin_center.to(device)
 
-  t = trange(config["num_epochs"], desc="\nTraining", leave=True)
+  MAE_age_test_best = float('inf')
+  
+  t = trange(config["epochs"], desc="\nTraining", leave=True)
   for epoch in t:
     loss_train = 0.0
     MAE_age_train = 0.0
@@ -172,6 +182,9 @@ def train(config, run=None):
   
     loss_test = loss_test / len(dataloader_test)
     MAE_age_test = MAE_age_test / len(dataloader_test)
+
+    if MAE_age_test < MAE_age_test_best:
+      MAE_age_test_best = MAE_age_test
   
     scheduler.step()
   
@@ -189,6 +202,10 @@ def train(config, run=None):
   artifact = wandb.Artifact("model", type="model")
   artifact.add_file("model.pth")
   run.log_artifact(artifact)
+
+  wandb.run.summary["test/MAE_age_best"] = MAE_age_test_best
+  print(f"\nTraining completed. Best MAE_age achieved: {MAE_age_test_best:.4f}")
+
   run.finish()
 
   return loss_test, MAE_age_test
@@ -196,16 +213,16 @@ def train(config, run=None):
 if __name__ == "__main__":
 
   parser = argparse.ArgumentParser(description="Example:")
-  parser.add_argument("--batch_size",  type=int,   default=8,    help="batch size")
+  parser.add_argument("--bs", type=int,   default=8,    help="batch size")
   parser.add_argument("--num_workers", type=int,   default=2,    help="number of workers")
-  parser.add_argument("--num_epochs",  type=int,   default=10,   help="total number of epochs")
-  parser.add_argument("--lr",          type=float, default=1e-2, help="learning rate")
-  parser.add_argument("--wd",          type=float, default=1e-3, help="weight decay")
-  parser.add_argument("--step_size",   type=int,   default=30,   help="step size")
-  parser.add_argument("--gamma",       type=float, default=0.3,  help="gamma")
+  parser.add_argument("--epochs", type=int,   default=10,   help="total number of epochs")
+  parser.add_argument("--lr", type=float, default=1e-2, help="learning rate")
+  parser.add_argument("--wd", type=float, default=1e-3, help="weight decay")
+  parser.add_argument("--step_size", type=int,   default=30,   help="step size")
+  parser.add_argument("--gamma", type=float, default=0.3,  help="gamma")
   args = parser.parse_args()
   config = vars(args)
 
-  run = wandb.init(project="fMRI-ConvNets", name=NAME, group=GROUP, config=config)
+  run = wandb.init(project="fMRI-ConvNets", config=config)
 
   train(config, run)

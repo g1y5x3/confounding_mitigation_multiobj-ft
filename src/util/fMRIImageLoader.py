@@ -79,7 +79,7 @@ class RandomMirror(object):
       return image
 
 class IXIDataset(Dataset):
-  def __init__(self, data_dir, label_file, bin_range=None, transform=None):
+  def __init__(self, data_dir, label_file, sites=None, bin_range=None, transform=None):
     print(f"Loading file: {label_file}")
     self.directory = data_dir
     self.info = pd.read_csv(data_dir+"/"+label_file)
@@ -92,7 +92,28 @@ class IXIDataset(Dataset):
       self.bin_range  = bin_range
       print(f"Provided Bin Range: {self.bin_range}")
 
+    # Filter data based on specified sites
+    if sites:
+      if isinstance(sites, str):
+        sites = [sites]
+      self.info = self.info[self.info["SITE"].isin(sites)]
+      print(f"Loading data from sites: {', '.join(sites)}")
+    else:
+      print("Loading data from all sites")
+    #Reset index after filtering
+    self.info = self.info.reset_index(drop=True)
+
+    # Count the number of images from each site
+    site_counts = self.info['SITE'].value_counts()
+    print("Count of entries by SITE:")
+    print(site_counts)
+
+    total_count = site_counts.sum()
+    print(f"\nTotal count for selected sites: {total_count}")
+
     # Pre-load the images and labels (if RAM is allowing)
+    print(f"Filtered DataFrame shape: {self.info.shape}")
+    print(self.info["FILENAME"][0])
     nii = nib.load(self.directory+"/"+self.info["FILENAME"][0])
     voxel_size = nii.header.get_zooms()
     print(f"Voxel Size: {voxel_size}")
