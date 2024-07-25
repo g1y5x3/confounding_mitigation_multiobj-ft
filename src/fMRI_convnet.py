@@ -86,17 +86,15 @@ def train(config, run=None):
   # based on the paper the training inputs are 
   # 1) randomly shifted by 0, 1, or 2 voxels along every axis; 
   # 2) has a probability of 50% to be mirrored about the sagittal plane
-  # site_test = ["Guys", "HH", "IOP"]
-  site_train = ["Guys", "HH"]
+  print(config["site_train"])
   data_train = IXIDataset(data_dir=DATA_DIR, label_file=f"IXI_{DATA_SPLIT}_train.csv",
-                          sites=site_train,
+                          sites=config["site_train"],
                           bin_range=bin_range, 
                           transform=[CenterRandomShift(randshift=True), RandomMirror()])
 
-  # site_test = ["Guys", "HH", "IOP"]
-  site_test = ["IOP"]
+  print(config["site_test"])
   data_test = IXIDataset(data_dir=DATA_DIR, label_file=f"IXI_{DATA_SPLIT}_test.csv",  
-                         sites=site_test, 
+                         sites=config["site_test"], 
                          bin_range=bin_range,
                          transform=[CenterRandomShift(randshift=False)])
 
