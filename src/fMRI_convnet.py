@@ -1,11 +1,15 @@
-import os, wandb, argparse, requests, torch
+import os, math, wandb, argparse, requests, torch
+import numpy as np
+import pandas as pd
+import nibabel as nib
 import torch.optim as optim
 import torch.nn.functional as F
 from torch import nn, optim
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 from torchinfo import summary
-from tqdm import trange
-from util.fMRIImageLoader import IXIDataset, CenterRandomShift, RandomMirror
+from tqdm import tqdm, trange
+from sklearn.model_selection import train_test_split
+from util.fMRIImageLoader import num2vect, CenterRandomShift, RandomMirror
 
 DATA_DIR   = os.getenv("DATA_DIR",   "data/IXI_4x4x4")
 DATA_SPLIT = os.getenv("DATA_SPLIT", "all")
@@ -14,6 +18,82 @@ def generate_wandb_name(config):
   train_sites = '_'.join(sorted(config['site_train']))
   test_sites = '_'.join(sorted(config['site_test']))
   return f"train_{train_sites}_test_{test_sites}"
+
+def load_and_split_data(config):
+  df = pd.read_csv("data/IXI_all.csv")
+
+  df_train_val = df[df["SITE"].isin(config["site_train"])]  
+  df_test = df[df["SITE"].isin(config["site_test"])]  
+  
+  df_train, df_val = train_test_split(df_train_val, test_size=0.1, random_state=42)
+
+  print(f"Training size: {len(df_train)}")
+  print(f"validation size: {len(df_val)}")
+  print(f"Testing size: {len(df_test)}")
+
+  return df_train, df_val, df_test
+
+class IXIDataset(Dataset):
+  def __init__(self, data_dir, data_df, bin_range=None, transform=None):
+    self.directory = data_dir
+    self.info = data_df
+    self.info = self.info.reset_index(drop=True)
+    self.transform = transform
+
+    if not bin_range:
+      self.bin_range = [math.floor(self.info['AGE'].min()), math.ceil(self.info['AGE'].max())]
+      print(f"Age min {self.info['AGE'].min()}, Age max {self.info['AGE'].max()}")
+      print("Computed Bin Range: ", self.bin_range)
+    else:
+      self.bin_range  = bin_range
+      print(f"Provided Bin Range: {self.bin_range}")
+
+    # Count the number of images from each site
+    site_counts = self.info['SITE'].value_counts()
+    print("Count of entries by SITE:")
+    print(site_counts)
+
+    total_count = site_counts.sum()
+    print(f"\nTotal count for selected sites: {total_count}")
+
+    # Pre-load the images and labels (if RAM is allowing)
+    print(self.info["FILENAME"][0])
+    nii = nib.load(self.directory+"/"+self.info["FILENAME"][0])
+    voxel_size = nii.header.get_zooms()
+    print(f"Voxel Size: {voxel_size}")
+    image = torch.tensor(nii.get_fdata(), dtype=torch.float32)
+    self.image_all = torch.empty((len(self.info),) + tuple(image.shape), dtype=torch.float32)
+
+    age = np.array([71.3])
+    y, bc = num2vect(age, self.bin_range, 1, 1)
+    label = torch.tensor(y, dtype=torch.float32)
+    self.label_all = torch.empty((len(self.info),) + tuple(label.shape)[1:], dtype=torch.float32)
+
+    for i in tqdm(range(len(self.info)), desc="Loading Data"):
+      nii = nib.load(self.directory+"/"+self.info["FILENAME"][i])
+      self.image_all[i,:] = torch.tensor(nii.get_fdata(), dtype=torch.float32)
+
+      age = self.info["AGE"][i]
+      y, _ = num2vect(age, self.bin_range, 1, 1)
+      y += 1e-16
+      self.label_all[i,:] = torch.tensor(y, dtype=torch.float32)
+
+    self.bin_center = torch.tensor(bc, dtype=torch.float32)
+
+    print(f"Image Dim {self.image_all.shape}")
+    print(f"Label Dim {self.label_all.shape}")
+    print(f"Min={self.image_all.min()}, Max={self.image_all.max()}, Mean={self.image_all.mean()}, Std={self.image_all.std()}")
+
+  def __len__(self):
+    return len(self.info)
+
+  def __getitem__(self, idx):
+    image, label = self.image_all[idx,:], self.label_all[idx,:]
+    if self.transform:
+      for tsfrm in self.transform:
+        image = tsfrm(image)
+    image = torch.unsqueeze(image, 0)
+    return image, label
 
 class SFCN(nn.Module):
   def __init__(self, channel_number=[32, 64, 128, 256, 256, 64], output_dim=40, dropout=True):
@@ -86,21 +166,24 @@ def train(config, run=None):
   # based on the paper the training inputs are 
   # 1) randomly shifted by 0, 1, or 2 voxels along every axis; 
   # 2) has a probability of 50% to be mirrored about the sagittal plane
-  print(config["site_train"])
-  data_train = IXIDataset(data_dir=DATA_DIR, label_file=f"IXI_{DATA_SPLIT}_train.csv",
-                          sites=config["site_train"],
+  df_train, df_val, df_test = load_and_split_data(config)
+
+  data_train = IXIDataset(data_dir=DATA_DIR, data_df=df_train,
                           bin_range=bin_range, 
                           transform=[CenterRandomShift(randshift=True), RandomMirror()])
 
-  print(config["site_test"])
-  data_test = IXIDataset(data_dir=DATA_DIR, label_file=f"IXI_{DATA_SPLIT}_test.csv",  
-                         sites=config["site_test"], 
+  data_valid = IXIDataset(data_dir=DATA_DIR, data_df=df_val,
+                          bin_range=bin_range, 
+                          transform=[CenterRandomShift(randshift=False)])
+
+  data_test = IXIDataset(data_dir=DATA_DIR, data_df=df_test,  
                          bin_range=bin_range,
                          transform=[CenterRandomShift(randshift=False)])
 
   bin_center = data_train.bin_center.reshape([-1,1])
 
   dataloader_train = DataLoader(data_train, batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=True)
+  dataloader_valid = DataLoader(data_valid, batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=False)
   dataloader_test  = DataLoader(data_test,  batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=False)
   
   x, y = next(iter(dataloader_train))
@@ -169,6 +252,20 @@ def train(config, run=None):
     MAE_age_train = MAE_age_train / len(dataloader_train)
   
     with torch.no_grad():
+      loss_valid = 0.0
+      MAE_age_valid = 0.0
+      for images, labels in dataloader_valid:
+        x, y = images.to(device), labels.to(device)
+        output = model(x)
+        loss = criterion(output.log(), y.log())
+  
+        age_target = y @ bin_center
+        age_pred   = output @ bin_center
+        MAE_age = F.l1_loss(age_pred, age_target, reduction="mean")
+  
+        loss_valid += loss.item()
+        MAE_age_valid += MAE_age.item()
+
       loss_test = 0.0
       MAE_age_test = 0.0
       for images, labels in dataloader_test:
@@ -182,7 +279,10 @@ def train(config, run=None):
   
         loss_test += loss.item()
         MAE_age_test += MAE_age.item()
-  
+
+    loss_valid = loss_valid / len(dataloader_valid)
+    MAE_age_valid = MAE_age_valid / len(dataloader_valid)
+ 
     loss_test = loss_test / len(dataloader_test)
     MAE_age_test = MAE_age_test / len(dataloader_test)
 
@@ -191,10 +291,12 @@ def train(config, run=None):
   
     scheduler.step()
   
-    t.set_description(f"Training: train/loss {loss_train:.2f}, train/MAE_age {MAE_age_train:.2f} test/loss {loss_test:.2f}, test/MAE_age {MAE_age_test:.2f}")
+    t.set_description(f"Training: train/MAE_age {MAE_age_train:.2f} valid/MAE_age {MAE_age_valid:.2f}, test/MAE_age {MAE_age_test:.2f}")
 
     wandb.log({"train/loss": loss_train,
                "train/MAE_age": MAE_age_train,
+               "valid/loss": loss_valid,
+               "valid/MAE_age": MAE_age_valid,
                "test/loss":  loss_test,
                "test/MAE_age":  MAE_age_test,
                })
@@ -224,9 +326,9 @@ if __name__ == "__main__":
   parser.add_argument("--step_size", type=int,   default=30,   help="step size")
   parser.add_argument("--gamma", type=float, default=0.3,  help="gamma")
   # specify training and testing site
-  parser.add_argument("--site_train", nargs='+', default=["Guys", "HH", "IOP"], 
+  parser.add_argument("--site_train", nargs='+', default=["Guys", "HH"], 
                       help="List of sites for training data (e.g., --site_train Guys HH)")
-  parser.add_argument("--site_test", nargs='+', default=["Guys", "HH", "IOP"], 
+  parser.add_argument("--site_test", nargs='+', default=["IOP"], 
                       help="List of sites for testing data (e.g., --site_test IOP)")
   args = parser.parse_args()
   config = vars(args)
