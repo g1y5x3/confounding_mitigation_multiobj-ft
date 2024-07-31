@@ -306,18 +306,28 @@ def train(config, run=None):
                "test/MAE_age":  MAE_age_test,
                })
     
+  # Convert the SITE from text to indices
+  site_index, _ = pd.factorize(df_train['SITE'])
+  C = np.array(site_index)
   with torch.no_grad():
     Y_target = []
     Y_predict = []
-    C = pd.factorize(df_train['SITE'])
-    print(C)
-    # # Run conditional permutation test
-    # for images, labels in dataloader_train_cpt:
-    #   images, labels = images.to(device), labels.to(device)
-    #   with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
-    #     output = model(images)
-    #     age_target = labels @ bin_center
-    #     age_pred   = output @ bin_center
+    # Run conditional permutation test
+    for images, labels in dataloader_train_cpt:
+      images, labels = images.to(device), labels.to(device)
+      output = model(images)
+      age_target = labels @ bin_center
+      age_pred   = output @ bin_center
+
+      Y_target.append(age_target.cpu().numpy())
+      Y_predict.append(age_pred.cpu().numpy())
+    
+    Y_target = np.concatenate(Y_target).squeeze()
+    Y_predict = np.concatenate(Y_predict).squeeze()
+
+  print(C.shape)
+  print(Y_target.shape)
+  print(Y_predict.shape)
   
   # Save and upload the trained model 
   torch.save(model.state_dict(), "model.pth")
