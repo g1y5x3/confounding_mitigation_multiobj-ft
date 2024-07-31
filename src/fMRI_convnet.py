@@ -224,6 +224,8 @@ def train(config, run=None):
   model.to(device)
   bin_center = bin_center.to(device)
 
+  MAE_age_train_best = float('inf')
+  MAE_age_valid_best = float('inf')
   MAE_age_test_best = float('inf')
   
   t = trange(config["epochs"], desc="\nTraining", leave=True)
@@ -287,6 +289,8 @@ def train(config, run=None):
     MAE_age_test = MAE_age_test / len(dataloader_test)
 
     if MAE_age_test < MAE_age_test_best:
+      MAE_age_train_best = MAE_age_train
+      MAE_age_valid_best = MAE_age_valid
       MAE_age_test_best = MAE_age_test
   
     scheduler.step()
@@ -308,7 +312,9 @@ def train(config, run=None):
   artifact.add_file("model.pth")
   run.log_artifact(artifact)
 
-  wandb.run.summary["test/MAE_age_best"] = MAE_age_test_best
+  wandb.run.summary["results/MAE_age_train"] = MAE_age_train_best
+  wandb.run.summary["results/MAE_age_valid"] = MAE_age_valid_best
+  wandb.run.summary["results/MAE_age_test"] = MAE_age_test_best
   print(f"\nTraining completed. Best MAE_age achieved: {MAE_age_test_best:.4f}")
 
   run.finish()
