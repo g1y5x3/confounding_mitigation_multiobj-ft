@@ -182,9 +182,10 @@ def train(config, run=None):
 
   bin_center = data_train.bin_center.reshape([-1,1])
 
-  dataloader_train = DataLoader(data_train, batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=True)
-  dataloader_valid = DataLoader(data_valid, batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=False)
-  dataloader_test  = DataLoader(data_test,  batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=False)
+  dataloader_train     = DataLoader(data_train, batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=True)
+  dataloader_train_cpt = DataLoader(data_train, batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=False)
+  dataloader_valid     = DataLoader(data_valid, batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=False)
+  dataloader_test      = DataLoader(data_test,  batch_size=config["bs"], num_workers=config["num_workers"], pin_memory=True, shuffle=False)
   
   x, y = next(iter(dataloader_train))
   print("\nTraining data summary:")
@@ -304,6 +305,19 @@ def train(config, run=None):
                "test/loss":  loss_test,
                "test/MAE_age":  MAE_age_test,
                })
+    
+  with torch.no_grad():
+    Y_target = []
+    Y_predict = []
+    C = pd.factorize(df_train['SITE'])
+    print(C)
+    # # Run conditional permutation test
+    # for images, labels in dataloader_train_cpt:
+    #   images, labels = images.to(device), labels.to(device)
+    #   with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
+    #     output = model(images)
+    #     age_target = labels @ bin_center
+    #     age_pred   = output @ bin_center
   
   # Save and upload the trained model 
   torch.save(model.state_dict(), "model.pth")
