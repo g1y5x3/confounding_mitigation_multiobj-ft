@@ -312,11 +312,14 @@ def train(config, run=None):
     # Convert the SITE from text to indices
     site_index, _ = pd.factorize(df_train['SITE'])
     C, Y_target, Y_predict = np.array(site_index), [], []
+    MAE_age_temp = 0
     for images, labels in dataloader_train_cpt:
       images, labels = images.to(device), labels.to(device)
       output = model(images)
       age_target = labels @ bin_center
       age_pred   = output @ bin_center
+      MAE_age = F.l1_loss(age_pred, age_target, reduction="mean")
+      MAE_age_temp += MAE_age.item()
 
       Y_target.append(age_target.cpu().numpy())
       Y_predict.append(age_pred.cpu().numpy())
@@ -327,9 +330,11 @@ def train(config, run=None):
     print(f"C: {C.shape}")
     print(f"Y_target: {Y_target.shape}")
     print(f"Y_predict: {Y_predict.shape}")
+    print(f"MAE_age_temp {MAE_age_temp}")
       
     # Run conditional permutation test
     ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
+    print(f"P-value: {ret.p}")
   
   # Save and upload the trained model 
   torch.save(model.state_dict(), "model.pth")
@@ -344,7 +349,6 @@ def train(config, run=None):
   wandb.run.summary["results/p_value"] = ret.p
 
   print(f"\nTraining completed. Best MAE_age achieved: {MAE_age_test_best:.4f}")
-  print(f"P-value: {ret.p}")
 
   run.finish()
 
