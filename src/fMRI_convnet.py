@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
 from torchinfo import summary
+from mlconfound.stats import partial_confound_test
 from tqdm import tqdm, trange
 from sklearn.model_selection import train_test_split
 from util.fMRIImageLoader import num2vect, CenterRandomShift, RandomMirror
@@ -305,14 +306,12 @@ def train(config, run=None):
                "test/loss":  loss_test,
                "test/MAE_age":  MAE_age_test,
                })
-    
-  # Convert the SITE from text to indices
-  site_index, _ = pd.factorize(df_train['SITE'])
-  C = np.array(site_index)
+
+  # Running the initial confounding test   
   with torch.no_grad():
-    Y_target = []
-    Y_predict = []
-    # Run conditional permutation test
+    # Convert the SITE from text to indices
+    site_index, _ = pd.factorize(df_train['SITE'])
+    C, Y_target, Y_predict = np.array(site_index), [], []
     for images, labels in dataloader_train_cpt:
       images, labels = images.to(device), labels.to(device)
       output = model(images)
@@ -321,13 +320,16 @@ def train(config, run=None):
 
       Y_target.append(age_target.cpu().numpy())
       Y_predict.append(age_pred.cpu().numpy())
-    
+
     Y_target = np.concatenate(Y_target).squeeze()
     Y_predict = np.concatenate(Y_predict).squeeze()
 
-  print(C.shape)
-  print(Y_target.shape)
-  print(Y_predict.shape)
+    print(f"C: {C.shape}")
+    print(f"Y_target: {Y_target.shape}")
+    print(f"Y_predict: {Y_predict.shape}")
+      
+    # Run conditional permutation test
+    ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
   
   # Save and upload the trained model 
   torch.save(model.state_dict(), "model.pth")
@@ -339,7 +341,10 @@ def train(config, run=None):
   wandb.run.summary["results/MAE_age_train"] = MAE_age_train_best
   wandb.run.summary["results/MAE_age_valid"] = MAE_age_valid_best
   wandb.run.summary["results/MAE_age_test"] = MAE_age_test_best
+  wandb.run.summary["results/p_value"] = ret.p
+
   print(f"\nTraining completed. Best MAE_age achieved: {MAE_age_test_best:.4f}")
+  print(f"P-value: {ret.p}")
 
   run.finish()
 
