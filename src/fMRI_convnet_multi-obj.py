@@ -157,31 +157,33 @@ class SFCN(nn.Module):
     return x
 
 class OptimizeMLPLayer(ElementwiseProblem):
-  def __init__(self, n_var=512, n_obj=2, n_constr=0, xl = -1*np.ones(512), xu = 1*np.ones(512), **kwargs):
+  def __init__(self, n_var=32768, n_obj=2, n_constr=0, xl = -1*np.ones(32768), xu = 1*np.ones(32768), **kwargs):
     super().__init__(n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl = xl, xu = xu, **kwargs)
 
-  def load_data(self, x_train, y_train, y_train_cpt, c_train, clf, perm):
+  def load_data(self, x_train, y_train, y_train_cpt, c_train, clf, bin_center, perm):
     self.clf = clf.to("cuda")
+    self.bin_center = bin_center
     self.x_train = torch.tensor(x_train, dtype=torch.float, device="cuda")
     self.y_train = torch.tensor(y_train, dtype=torch.float, device="cuda")
     self.y_train_cpt = y_train_cpt
-    self.criterion = nn.CrossEntropyLoss()
+    self.criterion = nn.KLDivLoss(reduction="batchmean", log_target=True)
     self.c_train = c_train
     self.perm = perm
 
   def _evaluate(self, x, out, *args, **kwargs):
     with torch.no_grad():
-      weight = torch.tensor(x.reshape((2,256)), dtype=torch.float, device="cuda")
+      weight = torch.tensor(x.reshape((64,512)), dtype=torch.float, device="cuda")
       clf_copy = deepcopy(self.clf)
-      clf_copy.mlp_head.weight.data = weight
+      clf_copy.fc_6.weight.data = weight
       output = clf_copy(self.x_train)
-      cross_entropy_loss = self.criterion(output, self.y_train)
+      kl_div_loss = self.criterion(output, self.y_train)
 
-      _, predicted = torch.max(F.softmax(output, dim=1), 1)
-      y_pred_cpt = np.array(predicted.to("cpu"))
+      age_predict = output @ self.bin_center
+      y_pred_cpt = np.array(age_predict.to("cpu"))
+
       ret = partial_confound_test(self.y_train_cpt, y_pred_cpt, self.c_train, cat_y=True, cat_yhat=True, cat_c=False, progress=False)
 
-      out['F'] = [cross_entropy_loss.to("cpu").numpy(), 1-ret.p]
+      out['F'] = [kl_div_loss.to("cpu").numpy(), 1-ret.p]
 
 def train(config, run=None):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -365,7 +367,7 @@ def train(config, run=None):
     print(f"P-value: {ret.p}")
 
   # Linear(in_features=512, out_features=64, bias=True)
-  print(model.classifier.fc_6)
+  print(model.classifier.fc_6.weight.shape)
   
   # Save and upload the trained model 
   torch.save(model.state_dict(), "model.pth")
