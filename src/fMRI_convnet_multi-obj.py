@@ -160,11 +160,10 @@ class OptimizeMLPLayer(ElementwiseProblem):
   def __init__(self, n_var=32768, n_obj=2, n_constr=0, xl = -1*np.ones(32768), xu = 1*np.ones(32768), **kwargs):
     super().__init__(n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl = xl, xu = xu, **kwargs)
 
-  def load_data(self, x_train, y_train, y_train_cpt, c_train, clf, bin_center, perm):
+  def load_data(self, y_train_cpt, c_train, dataloader, clf, bin_center, perm):
     self.clf = clf.to("cuda")
     self.bin_center = bin_center
-    self.x_train = torch.tensor(x_train, dtype=torch.float, device="cuda")
-    self.y_train = torch.tensor(y_train, dtype=torch.float, device="cuda")
+    self.dataloader = dataloader
     self.y_train_cpt = y_train_cpt
     self.criterion = nn.KLDivLoss(reduction="batchmean", log_target=True)
     self.c_train = c_train
