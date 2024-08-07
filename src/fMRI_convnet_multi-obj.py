@@ -12,6 +12,14 @@ from mlconfound.stats import partial_confound_test
 from tqdm import tqdm, trange
 from sklearn.model_selection import train_test_split
 from util.fMRIImageLoader import num2vect, CenterRandomShift, RandomMirror
+from multiprocessing.pool import ThreadPool
+from pymoo.optimize import minimize
+from pymoo.operators.mutation.pm import PM
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.core.problem import StarmapParallelization
+from pymoo.util.display.multi import MultiObjectiveOutput
+from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.core.problem import ElementwiseProblem
 
 DATA_DIR   = os.getenv("DATA_DIR",   "data/IXI_4x4x4")
@@ -258,6 +266,7 @@ def train(config, run=None):
   MAE_age_train_best = float('inf')
   MAE_age_valid_best = float('inf')
   MAE_age_test_best = float('inf')
+  model_best = None
   
   t = trange(config["epochs"], desc="\nTraining", leave=True)
   for epoch in t:
@@ -323,6 +332,7 @@ def train(config, run=None):
       MAE_age_train_best = MAE_age_train
       MAE_age_valid_best = MAE_age_valid
       MAE_age_test_best = MAE_age_test
+      model_best = deepcopy(model)
   
     scheduler.step()
   
@@ -344,7 +354,7 @@ def train(config, run=None):
     MAE_age_temp = 0
     for images, labels in dataloader_train_cpt:
       images, labels = images.to(device), labels.to(device)
-      output = model(images)
+      output = model_best(images)
       age_target = labels @ bin_center
       age_pred   = output @ bin_center
       MAE_age = F.l1_loss(age_pred, age_target, reduction="mean")
@@ -365,8 +375,37 @@ def train(config, run=None):
     ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
     print(f"P-value: {ret.p}")
 
-  # Linear(in_features=512, out_features=64, bias=True)
-  print(model.classifier.fc_6.weight.shape)
+    # Linear(in_features=512, out_features=64, bias=True)
+    print(model.classifier.fc_6.weight.shape)
+
+    # print('Genetic Algorithm Optimization...')
+
+    # # test with boundries
+    # xl = np.ones(32768) * model.classifier.fc_6.weight.min().cpu().numpy()
+    # xu = np.ones(32768) * model.classifier.fc_6.weight.max().cpu().numpy()
+
+    # pool = ThreadPool(config.thread)
+    # runner = StarmapParallelization(pool.starmap)
+    # problem = OptimizeMLPLayer(elementwise_runner=runner)
+    # # def load_data(self, y_train_cpt, c_train, dataloader, clf, bin_center, perm):
+    # problem.load_data(Y_target, C, Y_train_cpt, C_train, model_best, config.perm)
+    # # problem.load_data(X_train, Y_train, Y_train_cpt, C_train, model_best, config.perm)
+
+    # # Genetic algorithm initialization
+    # algorithm = NSGA2(pop_size  = config.pop,
+    #                   sampling  = FloatRandomSampling(),
+    #                   crossover = SBX(eta=15, prob=0.9),
+    #                   mutation  = PM(eta=20),
+    #                   output    = MultiObjectiveOutput())
+
+    # res = minimize(problem,
+    #                algorithm,
+    #                ("n_gen", config.ngen),
+    #                verbose=True)
+
+    # print('Completed! ', res.exec_time)
+    # pool.close()
+    # print(res.F)
   
   # Save and upload the trained model 
   torch.save(model.state_dict(), "model.pth")
