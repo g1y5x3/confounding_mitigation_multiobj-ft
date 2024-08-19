@@ -168,29 +168,43 @@ class OptimizeMLPLayer(ElementwiseProblem):
   def __init__(self, n_var=32768, n_obj=2, n_constr=0, xl = -1*np.ones(32768), xu = 1*np.ones(32768), **kwargs):
     super().__init__(n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl = xl, xu = xu, **kwargs)
 
-  def load_data(self, y_train_cpt, c_train, dataloader, clf, bin_center, perm):
+  def load_data(self, y_train_cpt, c_train, dataloader, clf, bin_center, device, perm):
     self.clf = clf.to("cuda")
     self.bin_center = bin_center
     self.dataloader = dataloader
     self.y_train_cpt = y_train_cpt
     self.criterion = nn.KLDivLoss(reduction="batchmean", log_target=True)
     self.c_train = c_train
+    self.device = device
     self.perm = perm
 
   def _evaluate(self, x, out, *args, **kwargs):
     with torch.no_grad():
       weight = torch.tensor(x.reshape((64,512)), dtype=torch.float, device="cuda")
       clf_copy = deepcopy(self.clf)
-      clf_copy.fc_6.weight.data = weight
-      output = clf_copy(self.x_train)
-      kl_div_loss = self.criterion(output, self.y_train)
+      clf_copy.classifier.fc_6.weight.data = weight
 
-      age_predict = output @ self.bin_center
-      y_pred_cpt = np.array(age_predict.to("cpu"))
+      loss_train = 0.0
+      Y_predict = []
+      for images, labels in self.dataloader:
+        images, labels = images.to(self.device), labels.to(self.device)
+        output = clf_copy(images)
 
-      ret = partial_confound_test(self.y_train_cpt, y_pred_cpt, self.c_train, cat_y=True, cat_yhat=True, cat_c=False, progress=False)
+        loss = self.criterion(output.log(), labels.log())
+        age_pred   = output @ self.bin_center
 
-      out['F'] = [kl_div_loss.to("cpu").numpy(), 1-ret.p]
+        loss_train += loss.item()
+        Y_predict.append(age_pred.cpu().numpy())
+
+      loss_train = loss_train / len(self.dataloader)
+      print(f"loss: {loss_train}")
+
+      Y_predict = np.concatenate(Y_predict).squeeze()
+
+      ret = partial_confound_test(self.y_train_cpt, Y_predict, self.c_train, cat_y=False, cat_yhat=False, cat_c=True, progress=False)
+      print(f"p-value {ret.p}")
+
+      out['F'] = [loss_train, 1-ret.p]
 
 def train(config, run=None):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -388,7 +402,7 @@ def train(config, run=None):
     runner = StarmapParallelization(pool.starmap)
     problem = OptimizeMLPLayer(elementwise_runner=runner)
     # def load_data(self, y_train_cpt, c_train, dataloader, clf, bin_center, perm):
-    problem.load_data(Y_target, C, dataloader_train_cpt, model_best, bin_center, config.perm)
+    problem.load_data(Y_target, C, dataloader_train_cpt, model_best, bin_center, device, config.perm)
 
     # Genetic algorithm initialization
     algorithm = NSGA2(pop_size  = config.pop,
@@ -397,14 +411,14 @@ def train(config, run=None):
                       mutation  = PM(eta=20),
                       output    = MultiObjectiveOutput())
 
-    # res = minimize(problem,
-    #                algorithm,
-    #                ("n_gen", config.ngen),
-    #                verbose=True)
+    res = minimize(problem,
+                   algorithm,
+                   ("n_gen", config.ngen),
+                   verbose=True)
 
-    # print('Completed! ', res.exec_time)
-    # pool.close()
-    # print(res.F)
+    print('Completed! ', res.exec_time)
+    pool.close()
+    print(res.F)
   
   # Save and upload the trained model 
   torch.save(model.state_dict(), "model.pth")
@@ -441,12 +455,11 @@ if __name__ == "__main__":
   parser.add_argument("--step_size", type=int,   default=30,   help="step size")
   parser.add_argument("--gamma", type=float, default=0.3,  help="gamma")
   # genetic algorithm config
-  parser.add_argument('--ngen', type=int, default=4, help="Number of generation")
+  parser.add_argument('--ngen', type=int, default=2, help="Number of generation")
   parser.add_argument('--pop', type=int, default=32, help='Population size')
   parser.add_argument('--thread', type=int, default=4, help='Number of threads')
   parser.add_argument('--perm', type=int, default=100, help='Permutation value')
   args = parser.parse_args()
-  # config = vars(args)
 
   wandb_name = generate_wandb_name(vars(args))
 
