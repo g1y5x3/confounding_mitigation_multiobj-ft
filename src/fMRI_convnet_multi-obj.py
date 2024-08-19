@@ -378,25 +378,24 @@ def train(config, run=None):
     # Linear(in_features=512, out_features=64, bias=True)
     print(model.classifier.fc_6.weight.shape)
 
-    # print('Genetic Algorithm Optimization...')
+    print('Genetic Algorithm Optimization...')
 
-    # # test with boundries
-    # xl = np.ones(32768) * model.classifier.fc_6.weight.min().cpu().numpy()
-    # xu = np.ones(32768) * model.classifier.fc_6.weight.max().cpu().numpy()
+    # test with boundries
+    xl = np.ones(32768) * model.classifier.fc_6.weight.min().cpu().numpy()
+    xu = np.ones(32768) * model.classifier.fc_6.weight.max().cpu().numpy()
 
-    # pool = ThreadPool(config.thread)
-    # runner = StarmapParallelization(pool.starmap)
-    # problem = OptimizeMLPLayer(elementwise_runner=runner)
-    # # def load_data(self, y_train_cpt, c_train, dataloader, clf, bin_center, perm):
-    # problem.load_data(Y_target, C, Y_train_cpt, C_train, model_best, config.perm)
-    # # problem.load_data(X_train, Y_train, Y_train_cpt, C_train, model_best, config.perm)
+    pool = ThreadPool(config.thread)
+    runner = StarmapParallelization(pool.starmap)
+    problem = OptimizeMLPLayer(elementwise_runner=runner)
+    # def load_data(self, y_train_cpt, c_train, dataloader, clf, bin_center, perm):
+    problem.load_data(Y_target, C, dataloader_train_cpt, model_best, bin_center, config.perm)
 
-    # # Genetic algorithm initialization
-    # algorithm = NSGA2(pop_size  = config.pop,
-    #                   sampling  = FloatRandomSampling(),
-    #                   crossover = SBX(eta=15, prob=0.9),
-    #                   mutation  = PM(eta=20),
-    #                   output    = MultiObjectiveOutput())
+    # Genetic algorithm initialization
+    algorithm = NSGA2(pop_size  = config.pop,
+                      sampling  = FloatRandomSampling(),
+                      crossover = SBX(eta=15, prob=0.9),
+                      mutation  = PM(eta=20),
+                      output    = MultiObjectiveOutput())
 
     # res = minimize(problem,
     #                algorithm,
@@ -428,6 +427,12 @@ def train(config, run=None):
 if __name__ == "__main__":
 
   parser = argparse.ArgumentParser(description="Example:")
+  # specify training and testing site
+  parser.add_argument("--site_train", nargs='+', default=["Guys", "HH"], 
+                      help="List of sites for training data (e.g., --site_train Guys HH)")
+  parser.add_argument("--site_test", nargs='+', default=["IOP"], 
+                      help="List of sites for testing data (e.g., --site_test IOP)")
+  # neural network config
   parser.add_argument("--bs", type=int,   default=8,    help="batch size")
   parser.add_argument("--num_workers", type=int,   default=2,    help="number of workers")
   parser.add_argument("--epochs", type=int,   default=10,   help="total number of epochs")
@@ -435,16 +440,17 @@ if __name__ == "__main__":
   parser.add_argument("--wd", type=float, default=1e-3, help="weight decay")
   parser.add_argument("--step_size", type=int,   default=30,   help="step size")
   parser.add_argument("--gamma", type=float, default=0.3,  help="gamma")
-  # specify training and testing site
-  parser.add_argument("--site_train", nargs='+', default=["Guys", "HH"], 
-                      help="List of sites for training data (e.g., --site_train Guys HH)")
-  parser.add_argument("--site_test", nargs='+', default=["IOP"], 
-                      help="List of sites for testing data (e.g., --site_test IOP)")
+  # genetic algorithm config
+  parser.add_argument('--ngen', type=int, default=4, help="Number of generation")
+  parser.add_argument('--pop', type=int, default=32, help='Population size')
+  parser.add_argument('--thread', type=int, default=4, help='Number of threads')
+  parser.add_argument('--perm', type=int, default=100, help='Permutation value')
   args = parser.parse_args()
-  config = vars(args)
+  # config = vars(args)
 
-  wandb_name = generate_wandb_name(config)
+  wandb_name = generate_wandb_name(vars(args))
 
-  run = wandb.init(project="fMRI-ConvNets", name=wandb_name, config=config)
+  run = wandb.init(project="fMRI-ConvNets", name=wandb_name, config=args)
+  config = run.config
 
   train(config, run)
