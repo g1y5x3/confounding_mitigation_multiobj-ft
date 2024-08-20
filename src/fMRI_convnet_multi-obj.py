@@ -197,12 +197,12 @@ class OptimizeMLPLayer(ElementwiseProblem):
         Y_predict.append(age_pred.cpu().numpy())
 
       loss_train = loss_train / len(self.dataloader)
-      print(f"loss: {loss_train}")
+      # print(f"loss: {loss_train}")
 
       Y_predict = np.concatenate(Y_predict).squeeze()
 
       ret = partial_confound_test(self.y_train_cpt, Y_predict, self.c_train, cat_y=False, cat_yhat=False, cat_c=True, progress=False)
-      print(f"p-value {ret.p}")
+      # print(f"p-value {ret.p}")
 
       out['F'] = [loss_train, 1-ret.p]
 
@@ -322,6 +322,9 @@ def train(config, run=None):
         loss_valid += loss.item()
         MAE_age_valid += MAE_age.item()
 
+      loss_valid = loss_valid / len(dataloader_valid)
+      MAE_age_valid = MAE_age_valid / len(dataloader_valid)
+
       loss_test = 0.0
       MAE_age_test = 0.0
       for images, labels in dataloader_test:
@@ -335,9 +338,6 @@ def train(config, run=None):
   
         loss_test += loss.item()
         MAE_age_test += MAE_age.item()
-
-    loss_valid = loss_valid / len(dataloader_valid)
-    MAE_age_valid = MAE_age_valid / len(dataloader_valid)
  
     loss_test = loss_test / len(dataloader_test)
     MAE_age_test = MAE_age_test / len(dataloader_test)
@@ -391,12 +391,12 @@ def train(config, run=None):
     print(f"C: {C.shape}")
     print(f"Y_target: {Y_target.shape}")
     print(f"Y_predict: {Y_predict.shape}")
-    print(f"MAE_age_train {MAE_age_train}")
-    print(f"loss_train {loss_train}")
       
     # Run conditional permutation test
     ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
     print(f"P-value: {ret.p}")
+    print(f"MAE_age_train: {MAE_age_train_best}")
+    print(f"MAE_age_test:  {MAE_age_test_best}")
 
     # Linear(in_features=512, out_features=64, bias=True)
     print(model.classifier.fc_6.weight.shape)
@@ -427,7 +427,62 @@ def train(config, run=None):
     print('Completed! ', res.exec_time)
     pool.close()
     print(res.F)
+
+    MAE_age_train_best_cpt = 0
+    MAE_age_valid_best_cpt = 0
+    MAE_age_test_best_cpt = 0
+    p_value_best_cpt = 0
+    for i in range(len(res.X)):
+      weight = torch.tensor(res.X[i,:].reshape((64,512)), dtype=torch.float32, device="cuda")
+      model_copy = deepcopy(model)
+      model_copy.classifier.fc_6.weight.data = weight
+      model_copy.eval()
+
+      Y_predict = []
+      loss_train = 0
+      MAE_age_train = 0
+      for images, labels in dataloader_train_cpt:
+        images, labels = images.to(device), labels.to(device)
+        output = model_copy(images)
+        loss = criterion(output.log(), labels.log())
+        loss_train += loss.item()
+
+        age_target = labels @ bin_center
+        age_pred   = output @ bin_center
+        MAE_age = F.l1_loss(age_pred, age_target, reduction="mean")
+        MAE_age_train += MAE_age.item()
+
+        Y_predict.append(age_pred.cpu().numpy())
+
+      loss_train = loss_train / len(dataloader_train_cpt)
+      MAE_age_train = MAE_age_train / len(dataloader_train_cpt)
+
+      Y_predict = np.concatenate(Y_predict).squeeze()
+
+      ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
+      
+      loss_test = 0.0
+      MAE_age_test = 0.0
+      for images, labels in dataloader_test:
+        x, y = images.to(device), labels.to(device)
+        output = model_copy(x)
+        loss = criterion(output.log(), y.log())
   
+        age_target = y @ bin_center
+        age_pred   = output @ bin_center
+        MAE_age = F.l1_loss(age_pred, age_target, reduction="mean")
+  
+        loss_test += loss.item()
+        MAE_age_test += MAE_age.item()
+
+      loss_test = loss_test / len(dataloader_test)
+      MAE_age_test = MAE_age_test / len(dataloader_test)
+
+      print(f"P-value: {ret.p}")
+      # print(f"MAE_age_train {MAE_age_train}")
+      print(f"MAE_age_test {MAE_age_test}")
+      # print(f"loss_train {loss_train}")
+
   # Save and upload the trained model 
   torch.save(model.state_dict(), "model.pth")
 
