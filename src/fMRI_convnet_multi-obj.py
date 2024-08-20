@@ -182,7 +182,7 @@ class OptimizeMLPLayer(ElementwiseProblem):
     with torch.no_grad():
       weight = torch.tensor(x.reshape((64,512)), dtype=torch.float, device="cuda")
       clf_copy = deepcopy(self.clf)
-      # clf_copy.classifier.fc_6.weight.data = weight
+      clf_copy.classifier.fc_6.weight.data = weight
 
       loss_train = 0.0
       Y_predict = []
@@ -409,8 +409,7 @@ def train(config, run=None):
 
     pool = ThreadPool(config.thread)
     runner = StarmapParallelization(pool.starmap)
-    problem = OptimizeMLPLayer(elementwise_runner=runner)
-    # def load_data(self, y_train_cpt, c_train, dataloader, clf, bin_center, perm):
+    problem = OptimizeMLPLayer(elementwise_runner=runner, xl=xl, xu=xu)
     problem.load_data(Y_target, C, dataloader_train_cpt, model_best, bin_center, device, config.perm)
 
     # Genetic algorithm initialization
