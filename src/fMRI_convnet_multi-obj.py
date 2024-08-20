@@ -182,7 +182,7 @@ class OptimizeMLPLayer(ElementwiseProblem):
     with torch.no_grad():
       weight = torch.tensor(x.reshape((64,512)), dtype=torch.float, device="cuda")
       clf_copy = deepcopy(self.clf)
-      clf_copy.classifier.fc_6.weight.data = weight
+      # clf_copy.classifier.fc_6.weight.data = weight
 
       loss_train = 0.0
       Y_predict = []
@@ -365,17 +365,25 @@ def train(config, run=None):
     # Convert the SITE from text to indices
     site_index, _ = pd.factorize(df_train['SITE'])
     C, Y_target, Y_predict = np.array(site_index), [], []
-    MAE_age_temp = 0
+    loss_train = 0
+    MAE_age_train = 0
     for images, labels in dataloader_train_cpt:
       images, labels = images.to(device), labels.to(device)
       output = model_best(images)
+
+      loss = criterion(output.log(), labels.log())
+      loss_train += loss.item()
+
       age_target = labels @ bin_center
       age_pred   = output @ bin_center
       MAE_age = F.l1_loss(age_pred, age_target, reduction="mean")
-      MAE_age_temp += MAE_age.item()
+      MAE_age_train += MAE_age.item()
 
       Y_target.append(age_target.cpu().numpy())
       Y_predict.append(age_pred.cpu().numpy())
+
+    loss_train = loss_train / len(dataloader_train_cpt)
+    MAE_age_train = MAE_age_train / len(dataloader_train_cpt)
 
     Y_target = np.concatenate(Y_target).squeeze()
     Y_predict = np.concatenate(Y_predict).squeeze()
@@ -383,7 +391,8 @@ def train(config, run=None):
     print(f"C: {C.shape}")
     print(f"Y_target: {Y_target.shape}")
     print(f"Y_predict: {Y_predict.shape}")
-    print(f"MAE_age_temp {MAE_age_temp}")
+    print(f"MAE_age_train {MAE_age_train}")
+    print(f"loss_train {loss_train}")
       
     # Run conditional permutation test
     ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
@@ -394,7 +403,7 @@ def train(config, run=None):
 
     print('Genetic Algorithm Optimization...')
 
-    # test with boundries
+    # test with boundries for weights search
     xl = np.ones(32768) * model.classifier.fc_6.weight.min().cpu().numpy()
     xu = np.ones(32768) * model.classifier.fc_6.weight.max().cpu().numpy()
 
