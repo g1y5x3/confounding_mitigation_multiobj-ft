@@ -394,18 +394,28 @@ def train(config, run=None):
       
     # Run conditional permutation test
     ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
-    print(f"P-value: {ret.p}")
     print(f"MAE_age_train: {MAE_age_train_best}")
+    print(f"MAE_age_valid: {MAE_age_valid_best}")
     print(f"MAE_age_test:  {MAE_age_test_best}")
+    print(f"P-value: {ret.p}")
 
-    # Linear(in_features=512, out_features=64, bias=True)
-    print(model.classifier.fc_6.weight.shape)
+    wandb.run.summary["results/MAE_age_train"] = MAE_age_train_best
+    wandb.run.summary["results/MAE_age_valid"] = MAE_age_valid_best
+    wandb.run.summary["results/MAE_age_test"] = MAE_age_test_best
+    wandb.run.summary["results/p_value"] = ret.p
 
     print('Genetic Algorithm Optimization...')
 
     # test with boundries for weights search
-    xl = np.ones(32768) * model.classifier.fc_6.weight.min().cpu().numpy()
-    xu = np.ones(32768) * model.classifier.fc_6.weight.max().cpu().numpy()
+    lower_bound = model.classifier.fc_6.weight.min().cpu().numpy() * 5
+    upper_bound = model.classifier.fc_6.weight.max().cpu().numpy() * 5
+    wandb.log({
+      "xl": lower_bound,
+      "xu": upper_bound
+    })
+
+    xl = np.ones(32768) * lower_bound 
+    xu = np.ones(32768) * upper_bound
 
     pool = ThreadPool(config.thread)
     runner = StarmapParallelization(pool.starmap)
@@ -479,9 +489,8 @@ def train(config, run=None):
       MAE_age_test = MAE_age_test / len(dataloader_test)
 
       print(f"P-value: {ret.p}")
-      # print(f"MAE_age_train {MAE_age_train}")
+      print(f"MAE_age_train {MAE_age_train}")
       print(f"MAE_age_test {MAE_age_test}")
-      # print(f"loss_train {loss_train}")
 
   # Save and upload the trained model 
   torch.save(model.state_dict(), "model.pth")
@@ -489,11 +498,6 @@ def train(config, run=None):
   artifact = wandb.Artifact("model", type="model")
   artifact.add_file("model.pth")
   run.log_artifact(artifact)
-
-  wandb.run.summary["results/MAE_age_train"] = MAE_age_train_best
-  wandb.run.summary["results/MAE_age_valid"] = MAE_age_valid_best
-  wandb.run.summary["results/MAE_age_test"] = MAE_age_test_best
-  wandb.run.summary["results/p_value"] = ret.p
 
   print(f"\nTraining completed. Best MAE_age achieved: {MAE_age_test_best:.4f}")
 
