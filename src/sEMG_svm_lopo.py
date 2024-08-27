@@ -7,11 +7,11 @@ from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 
-from util.sEMGhelpers import load_features, partition_features
+from util.sEMGhelpers import load_features, partition_features_pair
 
 WANDB = os.getenv("WANDB", False)
 NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
-GROUP = os.getenv("GROUP", "SVM-sEMG-Leave-One-Subject-Out")
+GROUP = os.getenv("GROUP", "SVM-sEMG-Leave-One-Pair-Out")
 
 if __name__ == "__main__":
 
@@ -52,7 +52,7 @@ if __name__ == "__main__":
                         reinit   = True)
       wandb.log({"subject_info/vfi_1"  : int(VFI_1[sub_test][0][0])})
 
-    X, Y, C, X_Test, Y_Test, _ = partition_features(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
+    X, Y, C, X_Test, Y_Test, _ = partition_features_pair(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
 
     # Split training and validation (mainly for shuffle validation set technicially ot used here)
     X_Train, X_Valid, YC_Train, YC_Valid = train_test_split(X, np.transpose([Y, C]),
