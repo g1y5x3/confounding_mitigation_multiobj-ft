@@ -33,13 +33,13 @@ def generate_wandb_name(config):
 def load_and_split_data(config):
   df = pd.read_csv("data/IXI_all.csv")
 
-  df_train_val = df[df["SITE"].isin(config["site_train"])]
+  #filter out subjects whos below 47 years old  
+  df = df[df["AGE"] > 47]
 
-  # TODO filter out subjects whos below 47 years old  
+  df_train_val = df[df["SITE"].isin(config["site_train"])]
   df_test = df[df["SITE"].isin(config["site_test"])]
 
   # peform a linear regression to create a confounding set  
-  
   df_train, df_val = train_test_split(df_train_val, test_size=0.1, random_state=42)
 
   print(f"Training size: {len(df_train)}")
@@ -201,12 +201,10 @@ class OptimizeMLPLayer(ElementwiseProblem):
         Y_predict.append(age_pred.cpu().numpy())
 
       loss_train = loss_train / len(self.dataloader)
-      # print(f"loss: {loss_train}")
 
       Y_predict = np.concatenate(Y_predict).squeeze()
 
-      ret = partial_confound_test(self.y_train_cpt, Y_predict, self.c_train, cat_y=False, cat_yhat=False, cat_c=False, progress=False)
-      # print(f"p-value {ret.p}")
+      ret = partial_confound_test(self.y_train_cpt, Y_predict, self.c_train, cat_y=False, cat_yhat=False, cat_c=True, progress=False)
 
       out['F'] = [loss_train, 1-ret.p]
 
@@ -232,9 +230,9 @@ def train(config, run=None):
                           bin_range=bin_range, 
                           transform=[CenterRandomShift(randshift=False)])
 
-  data_test = IXIDataset(data_dir=DATA_DIR, data_df=df_test,  
-                         bin_range=bin_range,
-                         transform=[CenterRandomShift(randshift=False)])
+  data_test  = IXIDataset(data_dir=DATA_DIR, data_df=df_test,  
+                          bin_range=bin_range,
+                          transform=[CenterRandomShift(randshift=False)])
 
   bin_center = data_train.bin_center.reshape([-1,1])
 
@@ -398,7 +396,7 @@ def train(config, run=None):
     print(f"Y_predict: {Y_predict.shape}")
       
     # Run conditional permutation test
-    ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=False, progress=True)
+    ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
     print(f"MAE_age_train: {MAE_age_train_best}")
     print(f"MAE_age_valid: {MAE_age_valid_best}")
     print(f"MAE_age_test:  {MAE_age_test_best}")
@@ -474,7 +472,7 @@ def train(config, run=None):
 
       Y_predict = np.concatenate(Y_predict).squeeze()
 
-      ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=False, progress=True)
+      ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
       
       loss_test = 0.0
       MAE_age_test = 0.0
