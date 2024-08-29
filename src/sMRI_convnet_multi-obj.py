@@ -11,6 +11,8 @@ from torchinfo import summary
 from mlconfound.stats import partial_confound_test
 from tqdm import tqdm, trange
 from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from scipy import stats
 from util.fMRIImageLoader import num2vect, CenterRandomShift, RandomMirror
 from multiprocessing.pool import ThreadPool
 from pymoo.optimize import minimize
@@ -30,6 +32,32 @@ def generate_wandb_name(config):
   test_sites = '_'.join(sorted(config['site_test']))
   return f"train_{train_sites}_test_{test_sites}"
 
+def create_confounded_sample(df, n_samples):
+  # Convert site to numeric (0 for Guy's, 1 for Hammersmith's)
+  df['SITE_INDEX'] = (df['SITE'] == "HH").astype(int)
+  
+  print(df['SITE_INDEX'].to_numpy())
+  print(df['AGE'].to_numpy())
+  
+  # Fit linear regression
+  reg = LinearRegression().fit(df['SITE_INDEX'].to_numpy().reshape(-1,1), df['AGE'].to_numpy().reshape(-1,1))
+
+  # calculate the age prediciton based on the site
+  df['AGE_PRED'] = reg.predict(df['SITE_INDEX'].to_numpy().reshape(-1,1))
+  df['RESIDUAL'] = df['AGE'] - df['AGE_PRED']
+  
+  df_sorted = df.sort_values('RESIDUAL', key=abs)
+  print(df_sorted)
+  sampled_df = df_sorted.head(n_samples)
+  
+  return sampled_df
+
+def check_significance(df):
+  guys_ages = df[df['SITE'] == "Guys"]['AGE']
+  hammersmith_ages = df[df['SITE'] == "HH"]['AGE']
+  t_stat, p_value = stats.ttest_ind(guys_ages, hammersmith_ages)
+  return p_value < 0.05, p_value, t_stat
+
 def load_and_split_data(config):
   df = pd.read_csv("data/IXI_all.csv")
 
@@ -39,14 +67,19 @@ def load_and_split_data(config):
   df_train_val = df[df["SITE"].isin(config["site_train"])]
   df_test = df[df["SITE"].isin(config["site_test"])]
 
-  # peform a linear regression to create a confounding set  
-  df_train, df_val = train_test_split(df_train_val, test_size=0.1, random_state=42)
+  # split the training and validation into half and half
+  df_train, df_val = train_test_split(df_train_val, test_size=0.5, random_state=42)
+  df_train_confounded = create_confounded_sample(df_train, n_samples=80)
+
+  # Check significance
+  is_significant, p_value, t_stat = check_significance(df_train_confounded)
+  print(f"Confounded sample created: {is_significant}. p-value: {p_value:.4f}, t-statistic: {t_stat:.4f}")
 
   print(f"Training size: {len(df_train)}")
   print(f"validation size: {len(df_val)}")
   print(f"Testing size: {len(df_test)}")
 
-  return df_train, df_val, df_test
+  return df_train_confounded, df_val, df_test
 
 class IXIDataset(Dataset):
   def __init__(self, data_dir, data_df, bin_range=None, transform=None):
