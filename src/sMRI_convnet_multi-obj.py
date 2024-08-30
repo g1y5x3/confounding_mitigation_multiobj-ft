@@ -64,7 +64,7 @@ def load_and_split_data(config):
   df_test = df[df["SITE"].isin(config["site_test"])]
 
   # split the training and validation into half and half
-  df_train, df_val = train_test_split(df_train_val, test_size=0.5, random_state=62)
+  df_train, df_val = train_test_split(df_train_val, test_size=0.5, random_state=config["seed"])
   df_train_confounded = create_confounded_sample(df_train, n_samples=80)
 
   # Check significance
@@ -587,6 +587,8 @@ if __name__ == "__main__":
   parser.add_argument('--pop', type=int, default=32, help='Population size')
   parser.add_argument('--thread', type=int, default=4, help='Number of threads')
   parser.add_argument('--perm', type=int, default=100, help='Permutation value')
+  # random seed
+  parser.add_argument('--seed', type=int, default=62, help="random seed for sampling subjects")
   args = parser.parse_args()
 
   wandb_name = generate_wandb_name(vars(args))
