@@ -433,7 +433,7 @@ def train(config, run=None):
 
     wandb.run.summary["results/MAE_age_train"] = MAE_age_train_best
     wandb.run.summary["results/MAE_age_valid"] = MAE_age_valid_best
-    # wandb.run.summary["results/MAE_age_test"] = MAE_age_test_best
+    wandb.run.summary["results/MAE_age_test"] = MAE_age_test_best
     wandb.run.summary["results/p_value"] = ret.p
 
     print('Genetic Algorithm Optimization...')
@@ -542,7 +542,7 @@ def train(config, run=None):
       print(f"MAE_age_valid {MAE_age_valid}")
       print(f"MAE_age_test {MAE_age_test}")
 
-      if MAE_age_valid < MAE_age_valid_best:
+      if MAE_age_valid < MAE_age_valid_best_cpt:
         MAE_age_train_best_cpt = MAE_age_train
         MAE_age_valid_best_cpt = MAE_age_valid
         MAE_age_test_best_cpt = MAE_age_test
