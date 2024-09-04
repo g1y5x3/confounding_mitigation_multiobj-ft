@@ -75,7 +75,7 @@ def load_and_split_data(config):
   print(f"validation size: {len(df_val)}")
   print(f"Testing size: {len(df_test)}")
 
-  return df_train_confounded, df_val, df_test
+  return df_train_confounded, df_val, df_test, p_value
 
 class IXIDataset(Dataset):
   def __init__(self, data_dir, data_df, bin_range=None, transform=None):
@@ -249,7 +249,8 @@ def train(config, run=None):
   # based on the paper the training inputs are 
   # 1) randomly shifted by 0, 1, or 2 voxels along every axis; 
   # 2) has a probability of 50% to be mirrored about the sagittal plane
-  df_train, df_val, df_test = load_and_split_data(config)
+  df_train, df_val, df_test, p_t_test = load_and_split_data(config)
+  wandb.run.summary["results/p_value_t-test"] = p_t_test
 
   data_train = IXIDataset(data_dir=DATA_DIR, data_df=df_train,
                           bin_range=bin_range, 
