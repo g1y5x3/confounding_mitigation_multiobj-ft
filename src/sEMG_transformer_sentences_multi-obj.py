@@ -18,17 +18,23 @@ from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.core.problem import ElementwiseProblem
 
 def load_raw_signals(file):
-  with h5py.File(file, 'r') as data:
-    signals = np.array(data['DATA'][()])
-    labels = np.array(data['LABEL'][()])
-    vfi_1 = np.array(data['SUBJECT_VFI'][()])
-    print(signals.shape)
-    print(labels.shape)
-    print(vfi_1)
 
-    sub_id = data['SUBJECT_ID'][()]
-    sub_skinfold = data['SUBJECT_SKINFOLD'][()]
-    
+  data = h5py.File(file)
+  print(data.keys())
+  signals = np.array(data['DATA'])
+  print(signals)
+  print(signals.shape)
+
+  labels = np.array(data['LABEL'])
+  vfi_1 = np.array(data['SUBJECT_VFI'])
+  sub_id = np.array(data['SUBJECT_ID'])
+  sub_skinfold = np.array(data['SUBJECT_SKINFOLD'])
+
+  print(labels.shape)
+  print(vfi_1.shape)
+  print(sub_id.shape)
+  print(sub_skinfold.shape)
+ 
   return signals, labels, vfi_1, sub_id, sub_skinfold
 
 class sEMGSignalDataset(Dataset):
@@ -359,6 +365,7 @@ if __name__ == "__main__":
 
   # load data
   signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_sen_raw.mat")
+  print(sub_id)
 
   wandb.init(project="sEMG_transformers", name=f"R{sub_id[args.sub_idx][0][0][0]}", config=args)
   config = wandb.config
