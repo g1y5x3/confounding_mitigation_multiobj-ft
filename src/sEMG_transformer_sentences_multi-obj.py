@@ -19,12 +19,19 @@ from pymoo.core.problem import ElementwiseProblem
 
 def load_raw_signals(file):
 
-  data = h5py.File(file)
+  data = h5py.File(file, 'r')
   print(data.keys())
-  signals = np.array(data['DATA'])
-  print(signals)
-  print(signals.shape)
-
+  # signals = np.array(data['DATA'][0][0].value)
+  print(data['DATA'].shape)
+  print(data['DATA'])
+  signals = data[data['DATA'][0,0]]
+  print(np.transpose(signals))
+  print(np.transpose(signals).shape)
+  print(type(signals))
+  print(np.array(signals[:,0]))
+  print(signals[:,0].shape)
+  print(type(signals[0]))
+  # print(signals.dtype)
   labels = np.array(data['LABEL'])
   vfi_1 = np.array(data['SUBJECT_VFI'])
   sub_id = np.array(data['SUBJECT_ID'])
@@ -365,7 +372,17 @@ if __name__ == "__main__":
 
   # load data
   signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_sen_raw.mat")
-  print(sub_id)
+  # (40, 4)
+  # <class 'numpy.ndarray'>
+  # (165, 4000)
+  # (40, 1)
+  # <class 'numpy.ndarray'>
+  # (40, 1)
+  # <class 'numpy.ndarray'>
+  # (40, 1)
+  # <class 'numpy.ndarray'>
+  # (40, 1)
+  # <class 'numpy.ndarray'>  
 
   wandb.init(project="sEMG_transformers", name=f"R{sub_id[args.sub_idx][0][0][0]}", config=args)
   config = wandb.config
