@@ -18,19 +18,31 @@ from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.core.problem import ElementwiseProblem
 
 def load_raw_signals(file):
-
   data = h5py.File(file, 'r')
   print(data.keys())
+  signals = np.empty((40,4), dtype=object)
+
+  for i in range(40):
+    for j in range(4):
+      signals[i,j] = np.transpose(data[data['DATA'][j,i]])
+
+  print(signals.shape)
+  print(signals[0,0][0,:])
+  print(signals[1,0][0,:])
+  print(signals[2,0][0,:])
+  print(signals[3,0][0,:])
+  print(signals[4,0][0,:])
+
   # signals = np.array(data['DATA'][0][0].value)
-  print(data['DATA'].shape)
-  print(data['DATA'])
-  signals = data[data['DATA'][0,0]]
-  print(np.transpose(signals))
-  print(np.transpose(signals).shape)
-  print(type(signals))
-  print(np.array(signals[:,0]))
-  print(signals[:,0].shape)
-  print(type(signals[0]))
+  # print(data['DATA'].shape)
+  # print(data['DATA'])
+  # signals = ]
+  # print(np.transpose(signals))
+  # print(np.transpose(signals).shape)
+  # print(type(signals))
+  # print(np.array(signals[:,0]))
+  # print(signals[:,0].shape)
+  # print(type(signals[0]))
   # print(signals.dtype)
   labels = np.array(data['LABEL'])
   vfi_1 = np.array(data['SUBJECT_VFI'])
