@@ -32,23 +32,16 @@ def load_raw_signals(file):
       signals[i,j] = np.transpose(data[data['DATA'][j,i]])
     
     labels[i,0] = np.transpose(data[data['LABEL'][0,i]])
+    vfi_1[i,0] = np.transpose(data[data['SUBJECT_VFI'][0,i]])
+    sub_id[i,0] = np.transpose(data[data['SUBJECT_ID'][0,i]])
+    sub_skinfold[i,0] = np.transpose(data[data['SUBJECT_SKINFOLD'][0,i]])
+    
+    print(i)
+    print(signals[i,j].shape)
+    print(vfi_1[i,0].shape)
+    print(sub_id[i,0].shape)
+    print(sub_skinfold[i,0].shape)
 
-  print(f"signals {signals.shape}")
-  print(f"labels {labels.shape}")
-
-  # print(data['LABEL'])
-  # print(data[data['LABEL'][0, 0]].shape)
-
-  labels = np.array(data['LABEL'])
-  vfi_1 = np.array(data['SUBJECT_VFI'])
-  sub_id = np.array(data['SUBJECT_ID'])
-  sub_skinfold = np.array(data['SUBJECT_SKINFOLD'])
-
-  # print(labels.shape)
-  # print(vfi_1.shape)
-  # print(sub_id.shape)
-  # print(sub_skinfold.shape)
- 
   return signals, labels, vfi_1, sub_id, sub_skinfold
 
 class sEMGSignalDataset(Dataset):
@@ -68,7 +61,7 @@ class sEMGtransformer(nn.Module):
   def __init__(self, patch_size=64, d_model=512, nhead=8, dim_feedforward=2048, dropout=0.1, num_layers=1):
     super().__init__()
     self.patch_size = patch_size
-    self.seq_len = 4000 // patch_size
+    self.seq_len = 16000 // patch_size
 
     self.input_project = nn.Linear(4*self.patch_size, d_model)
     self.dropout = nn.Dropout(dropout)
@@ -368,28 +361,17 @@ if __name__ == "__main__":
   parser.add_argument('--d_model', type=int, default=256, help="transformer embedding dim")
   parser.add_argument('--nhead', type=int, default=8, help="transformer number of attention heads")
   parser.add_argument('--dim_feedforward', type=int, default=1024, help="transformer feed-forward dim")
-  parser.add_argument('--num_layers', type=int, default=3, help="number of transformer encoder layers")
+  parser.add_argument('--num_layers', type=int, default=1, help="number of transformer encoder layers")
   parser.add_argument('--dropout', type=float, default=0.3, help="dropout rate")
   # genetic algorithm config
   parser.add_argument('--ngen', type=int, default=4, help="Number of generation")
-  parser.add_argument('--pop', type=int, default=32, help='Population size')
+  parser.add_argument('--pop', type=int, default=128, help='Population size')
   parser.add_argument('--thread', type=int, default=4, help='Number of threads')
-  parser.add_argument('--perm', type=int, default=100, help='Permutation value')
+  parser.add_argument('--perm', type=int, default=1000, help='Permutation value')
   args = parser.parse_args()
 
   # load data
   signals, labels, vfi_1, sub_id, sub_skinfold = load_raw_signals("data/subjects_40_sen_raw.mat")
-  # (40, 4)
-  # <class 'numpy.ndarray'>
-  # (165, 4000)
-  # (40, 1)
-  # <class 'numpy.ndarray'>
-  # (40, 1)
-  # <class 'numpy.ndarray'>
-  # (40, 1)
-  # <class 'numpy.ndarray'>
-  # (40, 1)
-  # <class 'numpy.ndarray'>  
 
   wandb.init(project="sEMG_transformers", name=f"R{sub_id[args.sub_idx][0][0][0]}", config=args)
   config = wandb.config
