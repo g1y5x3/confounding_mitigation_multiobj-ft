@@ -20,39 +20,34 @@ from pymoo.core.problem import ElementwiseProblem
 def load_raw_signals(file):
   data = h5py.File(file, 'r')
   print(data.keys())
+
   signals = np.empty((40,4), dtype=object)
+  labels = np.empty((40,1), dtype=object)
+  vfi_1 = np.empty((40,1), dtype=object)
+  sub_id = np.empty((40,1), dtype=object)
+  sub_skinfold = np.empty((40,1), dtype=object)
 
   for i in range(40):
     for j in range(4):
       signals[i,j] = np.transpose(data[data['DATA'][j,i]])
+    
+    labels[i,0] = np.transpose(data[data['LABEL'][0,i]])
 
-  print(signals.shape)
-  print(signals[0,0][0,:])
-  print(signals[1,0][0,:])
-  print(signals[2,0][0,:])
-  print(signals[3,0][0,:])
-  print(signals[4,0][0,:])
+  print(f"signals {signals.shape}")
+  print(f"labels {labels.shape}")
 
-  # signals = np.array(data['DATA'][0][0].value)
-  # print(data['DATA'].shape)
-  # print(data['DATA'])
-  # signals = ]
-  # print(np.transpose(signals))
-  # print(np.transpose(signals).shape)
-  # print(type(signals))
-  # print(np.array(signals[:,0]))
-  # print(signals[:,0].shape)
-  # print(type(signals[0]))
-  # print(signals.dtype)
+  # print(data['LABEL'])
+  # print(data[data['LABEL'][0, 0]].shape)
+
   labels = np.array(data['LABEL'])
   vfi_1 = np.array(data['SUBJECT_VFI'])
   sub_id = np.array(data['SUBJECT_ID'])
   sub_skinfold = np.array(data['SUBJECT_SKINFOLD'])
 
-  print(labels.shape)
-  print(vfi_1.shape)
-  print(sub_id.shape)
-  print(sub_skinfold.shape)
+  # print(labels.shape)
+  # print(vfi_1.shape)
+  # print(sub_id.shape)
+  # print(sub_skinfold.shape)
  
   return signals, labels, vfi_1, sub_id, sub_skinfold
 
