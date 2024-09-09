@@ -262,13 +262,15 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   with torch.no_grad():
     print('Genetic Algorithm Optimization...')
 
-    # test with boundries
-    xl = np.ones(512) * model_best.mlp_head.weight.min().cpu().numpy()
-    xu = np.ones(512) * model_best.mlp_head.weight.max().cpu().numpy()
+    # optimization boundries
+    xl = config.cap * np.ones(512) * model_best.mlp_head.weight.min().cpu().numpy()
+    xu = config.cap * np.ones(512) * model_best.mlp_head.weight.max().cpu().numpy()
+    print(f"lower: {xl[0]}")
+    print(f"upper: {xu[0]}")
 
     pool = ThreadPool(config.thread)
     runner = StarmapParallelization(pool.starmap)
-    problem = OptimizeMLPLayer(elementwise_runner=runner)
+    problem = OptimizeMLPLayer(elementwise_runner=runner, xl=xl, xu=xu)
     problem.load_data(X_train, Y_train, Y_train_cpt, C_train, model_best, config.perm)
 
     # Genetic algorithm initialization
@@ -368,6 +370,7 @@ if __name__ == "__main__":
   parser.add_argument('--pop', type=int, default=128, help='Population size')
   parser.add_argument('--thread', type=int, default=4, help='Number of threads')
   parser.add_argument('--perm', type=int, default=1000, help='Permutation value')
+  parser.add_argument('--cap', type=float, default=1, help="scale factor for the weight cap")
   args = parser.parse_args()
 
   # load data
