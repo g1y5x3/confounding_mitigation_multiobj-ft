@@ -4,7 +4,10 @@ wandb
 runs
 data/IXI_4x4x4
 data/IXI_10x10x10
+data/*.mat
 
 settings.json
+
  *.yaml
  *.pth
+ *.sh
