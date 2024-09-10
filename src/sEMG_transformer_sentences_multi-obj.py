@@ -333,7 +333,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       Y_pred = []
       for inputs, targets in dataloader_train_cpt:
         inputs, targets = inputs.to("cuda"), targets.to("cuda")
-        outputs = model_copy(inputs)
+        outputs, _ = model_copy(inputs)
         correct_train += count_correct(outputs, targets)
         _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
         Y_pred.append(predicted.cpu().numpy())
@@ -347,7 +347,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       correct_valid = 0
       for inputs, targets in dataloader_valid:
         inputs, targets = inputs.to("cuda"), targets.to("cuda")
-        outputs = model_copy(inputs)
+        outputs, _ = model_copy(inputs)
         correct_valid += count_correct(outputs, targets)
 
       print(f"Validation Accuracy: {correct_valid/len(dataset_valid)}")
@@ -356,7 +356,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       correct_test = 0
       for inputs, targets in dataloader_test:
         inputs, targets = inputs.to("cuda"), targets.to("cuda")
-        outputs = model_copy(inputs)
+        outputs, _ = model_copy(inputs)
         correct_test += count_correct(outputs, targets)
 
       print(f"Testing Accuracy: {correct_test/len(dataset_test)}")
