@@ -31,12 +31,12 @@ def load_raw_signals(file):
   for i in range(40):
     for j in range(4):
       signals[i,j] = np.transpose(data[data['DATA'][j,i]])
-    
+
     labels[i,0] = np.transpose(data[data['LABEL'][0,i]])
     vfi_1[i,0] = np.transpose(data[data['SUBJECT_VFI'][0,i]])
     sub_id[i,0] = np.transpose(data[data['SUBJECT_ID'][0,i]])
     sub_skinfold[i,0] = np.transpose(data[data['SUBJECT_SKINFOLD'][0,i]])
-    
+
     print(i)
     print(signals[i,j].shape)
     print(vfi_1[i,0].shape)
@@ -211,10 +211,9 @@ def train(config, signals, labels, sub_id, sub_skinfold):
           sample = inputs_np[10,:,:]
           print(sample.shape)
           fig, axs = plt.subplots(4,1)
-          axs[0].plot(sample[0,:])
-          axs[1].plot(sample[1,:])
-          axs[2].plot(sample[2,:])
-          axs[3].plot(sample[3,:])
+          for i in range(4):
+            axs[i].plot(sample[i,:])
+
           plt.tight_layout()
           plt.savefig("signal_sample")
           plt.close(fig)
@@ -270,11 +269,10 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
   # analyze attention activation
   outputs, attn = model_best(torch.tensor(sample).unsqueeze(0).to("cuda"))
-  print(outputs.shape)
-  print(attn.shape)
   attn = attn.squeeze(0).cpu().detach().numpy()
-  plt.figure()
   attn_img = plt.imshow(attn, cmap='viridis', aspect='auto')
+
+  plt.figure()
   plt.colorbar(attn_img)
   plt.savefig("signal_attn_map")
   plt.close()
