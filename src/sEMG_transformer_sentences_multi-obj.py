@@ -270,9 +270,9 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   # analyze attention activation
   outputs, attn = model_best(torch.tensor(sample).unsqueeze(0).to("cuda"))
   attn = attn.squeeze(0).cpu().detach().numpy()
-  attn_img = plt.imshow(attn, cmap='viridis', aspect='auto')
 
   plt.figure()
+  attn_img = plt.imshow(attn, cmap='viridis', aspect='auto')
   plt.colorbar(attn_img)
   plt.savefig("signal_attn_map")
   plt.close()
