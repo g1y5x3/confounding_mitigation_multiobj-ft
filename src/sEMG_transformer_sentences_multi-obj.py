@@ -2,6 +2,7 @@ import copy, torch, wandb, h5py, argparse
 import numpy as np
 import scipy.io as sio
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 from torch import nn
 from tqdm import tqdm
 from copy import deepcopy
@@ -87,13 +88,13 @@ class sEMGtransformer(nn.Module):
     x = x + self.pos_embedding[:,:(self.seq_len+1)]
     x = self.dropout(x)
 
-    x = self.transformer_encoder(x)
+    attn = self.transformer_encoder(x)
 
     # compare to using only the cls_token, using mean of embedding has a much smoother loss curve
     # x = x.mean(dim=1)
-    x = x[:,0,:]
+    x = attn[:,0,:]
     x = self.mlp_head(x)
-    return x
+    return x, attn
 
 class OptimizeMLPLayer(ElementwiseProblem):
   def __init__(self, n_var=512, n_obj=2, n_constr=0, xl = -1*np.ones(512), xu = 1*np.ones(512), **kwargs):
@@ -113,7 +114,7 @@ class OptimizeMLPLayer(ElementwiseProblem):
       weight = torch.tensor(x.reshape((2,256)), dtype=torch.float, device="cuda")
       clf_copy = deepcopy(self.clf)
       clf_copy.mlp_head.weight.data = weight
-      output = clf_copy(self.x_train)
+      output, _ = clf_copy(self.x_train)
       cross_entropy_loss = self.criterion(output, self.y_train)
 
       _, predicted = torch.max(F.softmax(output, dim=1), 1)
@@ -193,6 +194,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   accuracy_valid_best = 0
   accuracy_test_best = 0
   model_best = None
+  plot = False
   for epoch in tqdm(range(config.epochs), desc="Training"):
     loss_train = 0
     correct_train = 0
@@ -201,7 +203,24 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       inputs, targets = inputs.to("cuda"), targets.to("cuda")
       optimizer.zero_grad()
       with torch.autocast(device_type="cuda", dtype=torch.float16):
-        outputs = model(inputs)
+
+        # save a random sample to attention analysis
+        if not plot:
+          inputs_np = inputs.cpu().numpy()
+          # TODO make the selection random
+          sample = inputs_np[10,:,:]
+          print(sample.shape)
+          fig, axs = plt.subplots(4,1)
+          axs[0].plot(sample[0,:])
+          axs[1].plot(sample[1,:])
+          axs[2].plot(sample[2,:])
+          axs[3].plot(sample[3,:])
+          plt.tight_layout()
+          plt.savefig("signal_sample")
+          plt.close(fig)
+          plot = True
+
+        outputs, _ = model(inputs)
         loss = criterion(outputs, targets)
 
       scaler.scale(loss).backward()
@@ -218,7 +237,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
     model.eval()
     for inputs, targets in dataloader_valid:
       inputs, targets = inputs.to("cuda"), targets.to("cuda")
-      outputs = model(inputs)
+      outputs, _ = model(inputs)
       loss = criterion(outputs, targets)
       correct_valid += count_correct(outputs, targets)
       loss_valid += loss.item()
@@ -232,7 +251,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       correct_test = 0
       for inputs, targets in dataloader_test:
         inputs, targets = inputs.to("cuda"), targets.to("cuda")
-        outputs = model(inputs)
+        outputs, _ = model(inputs)
         correct_test += count_correct(outputs, targets)
       accuracy_test_best = correct_test/len(dataset_test)
       wandb.log({"accuracy/test": correct_test/len(dataset_test)}, step=epoch)
@@ -243,11 +262,22 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   Y_pred = []
   for inputs, targets in dataloader_train_cpt:
     inputs, targets = inputs.to("cuda"), targets.to("cuda")
-    outputs = model_best(inputs)
+    outputs, _ = model_best(inputs)
     _, predicted = torch.max(F.softmax(outputs, dim=1), 1)
     Y_pred.append(predicted.cpu().numpy())
   Y_pred_cpt = np.concatenate(Y_pred, axis=0)
   ret = partial_confound_test(Y_train_cpt, Y_pred_cpt, C_train, cat_y=True, cat_yhat=True, cat_c=False)
+
+  # analyze attention activation
+  outputs, attn = model_best(torch.tensor(sample).unsqueeze(0).to("cuda"))
+  print(outputs.shape)
+  print(attn.shape)
+  attn_weights = attn.squeeze(0).cpu().detach().numpy()
+  plt.figure()
+  attn_img = plt.imshow(attn_weights, cmap='viridis', aspect='auto')
+  plt.colorbar(attn_img)
+  plt.savefig("signal_attn_map")
+  plt.close()
 
   print(f"accuracy_train_best: {accuracy_train_best}")
   print(f"P-value: {ret.p}")
