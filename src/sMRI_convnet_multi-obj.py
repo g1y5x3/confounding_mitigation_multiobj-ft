@@ -8,7 +8,6 @@ from copy import deepcopy
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
 from torchinfo import summary
-from mlconfound.stats import partial_confound_test
 from tqdm import tqdm, trange
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
@@ -23,6 +22,8 @@ from pymoo.core.problem import StarmapParallelization
 from pymoo.util.display.multi import MultiObjectiveOutput
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.core.problem import ElementwiseProblem
+# from mlconfound.stats import partial_confound_test
+from mlconfound.stats import _r2_factory, _conditional_log_likelihood_factory, ResultsPartiallyConfounded, cpt
 
 DATA_DIR   = os.getenv("DATA_DIR",   "data/IXI_4x4x4")
 DATA_SPLIT = os.getenv("DATA_SPLIT", "all")
@@ -31,6 +32,22 @@ def generate_wandb_name(config):
   train_sites = '_'.join(sorted(config['site_train']))
   test_sites = '_'.join(sorted(config['site_test']))
   return f"train_{train_sites}_test_{test_sites}"
+
+def partial_confound_test(y, yhat, c, num_perms=1000,
+                          cat_y=False, cat_yhat=False, cat_c=False,
+                          mcmc_steps=50, cond_dist_method="gam",
+                          return_null_dist=False, random_state=None, progress=True, n_jobs=-1):
+
+    r2_c_yhat = _r2_factory(cat_c, cat_yhat)
+    r2_c_y = _r2_factory(cat_c, cat_y)
+    r2_yhat_y = _r2_factory(cat_yhat, cat_y)
+
+    condlike_f = _conditional_log_likelihood_factory(cat_c, cat_y, cond_dist_method)
+
+    return ResultsPartiallyConfounded(
+        *cpt(x=c, y=yhat, z=y, num_perms=num_perms, t_xy=r2_c_yhat, t_xz=r2_c_y, t_yz=r2_yhat_y, condlike_f=condlike_f,
+             mcmc_steps=mcmc_steps, return_null_dist=return_null_dist, random_state=random_state,
+             progress=progress, n_jobs=n_jobs))
 
 def create_confounded_sample(df, n_samples):
   # Convert site to numeric (0 for Guy's, 1 for Hammersmith's)
