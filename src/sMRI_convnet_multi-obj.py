@@ -4,6 +4,7 @@ import pandas as pd
 import nibabel as nib
 import torch.optim as optim
 import torch.nn.functional as F
+from scipy import stats
 from copy import deepcopy
 from tqdm import tqdm, trange
 from multiprocessing.pool import ThreadPool
@@ -21,10 +22,7 @@ from pymoo.core.problem import ElementwiseProblem
 from mlconfound.stats import _r2_factory, _conditional_log_likelihood_factory, ResultsPartiallyConfounded, cpt
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
-from scipy import stats
-
 from util.fMRIImageLoader import num2vect, CenterRandomShift, RandomMirror
-# from sklearn.metrics.cluster import normalized_mutual_info_score
 
 DATA_DIR   = os.getenv("DATA_DIR",   "data/IXI_4x4x4")
 DATA_SPLIT = os.getenv("DATA_SPLIT", "all")
@@ -35,8 +33,6 @@ def generate_wandb_name(config):
   return f"train_{train_sites}_test_{test_sites}"
 
 def pointbiserial(x,y):
-  # print(f"x {x}")
-  # print(f"y {y}")
   correlation, _ = stats.pointbiserialr(x, y)
   return correlation
 
@@ -45,11 +41,15 @@ def partial_confound_test(y, yhat, c, num_perms=1000,
                           mcmc_steps=50, cond_dist_method="gam",
                           return_null_dist=False, random_state=None, progress=True, n_jobs=-1):
 
+    # use point-biserial correlation as metriC
     r2_c_yhat = pointbiserial
-    # r2_c_yhat = _r2_factory(cat_c, cat_yhat)
     r2_c_y = pointbiserial
+
+    # Use the original pearson correlation as metric
+    # r2_c_yhat = _r2_factory(cat_c, cat_yhat)
     # r2_c_y = _r2_factory(cat_c, cat_y)
-    r2_yhat_y = _r2_factory(cat_yhat, cat_y)
+
+    r2_yhat_y = _r2_factory(cat_yhat, cat_y) # this one doesn't really matter since it doesn't go into p-value calculation
 
     condlike_f = _conditional_log_likelihood_factory(cat_c, cat_y, cond_dist_method)
 
