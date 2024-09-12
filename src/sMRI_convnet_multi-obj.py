@@ -1,4 +1,4 @@
-import os, math, wandb, argparse, requests, torch
+import os, math, wandb, argparse, requests, torch, warnings
 import numpy as np
 import pandas as pd
 import nibabel as nib
@@ -9,8 +9,6 @@ from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
 from torchinfo import summary
 from tqdm import tqdm, trange
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
 from scipy import stats
 from util.fMRIImageLoader import num2vect, CenterRandomShift, RandomMirror
 from multiprocessing.pool import ThreadPool
@@ -24,6 +22,11 @@ from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.core.problem import ElementwiseProblem
 # from mlconfound.stats import partial_confound_test
 from mlconfound.stats import _r2_factory, _conditional_log_likelihood_factory, ResultsPartiallyConfounded, cpt
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+
+warnings.simplefilter('ignore', UserWarning)
+from sklearn.metrics.cluster import normalized_mutual_info_score
 
 DATA_DIR   = os.getenv("DATA_DIR",   "data/IXI_4x4x4")
 DATA_SPLIT = os.getenv("DATA_SPLIT", "all")
@@ -33,12 +36,22 @@ def generate_wandb_name(config):
   test_sites = '_'.join(sorted(config['site_test']))
   return f"train_{train_sites}_test_{test_sites}"
 
+def mutual_info(x,y):
+  mi = normalized_mutual_info_score(y,x)
+  # print(f"x {x}")
+  # print(f"y {y}")
+  # print(f"mi {mi}")
+  return mi
+
 def partial_confound_test(y, yhat, c, num_perms=1000,
                           cat_y=False, cat_yhat=False, cat_c=False,
                           mcmc_steps=50, cond_dist_method="gam",
                           return_null_dist=False, random_state=None, progress=True, n_jobs=-1):
 
-    r2_c_yhat = _r2_factory(cat_c, cat_yhat)
+    r2_c_yhat = mutual_info
+    # r2_c_y = normalized_mutual_info_score
+    # r2_yhat_y = normalized_mutual_info_score
+    # r2_c_yhat = _r2_factory(cat_c, cat_yhat)
     r2_c_y = _r2_factory(cat_c, cat_y)
     r2_yhat_y = _r2_factory(cat_yhat, cat_y)
 
@@ -72,6 +85,7 @@ def check_significance(df):
   return p_value < 0.05, p_value, t_stat
 
 def load_and_split_data(config):
+  # TODO: test confounding with other attributes
   df = pd.read_csv("data/IXI_all.csv")
 
   #filter out subjects whos below 47 years old  
@@ -250,7 +264,7 @@ class OptimizeMLPLayer(ElementwiseProblem):
 
       Y_predict = np.concatenate(Y_predict).squeeze()
 
-      ret = partial_confound_test(self.y_train_cpt, Y_predict, self.c_train, cat_y=False, cat_yhat=False, cat_c=True, progress=False)
+      ret = partial_confound_test(self.y_train_cpt, Y_predict, self.c_train, cat_y=False, cat_yhat=False, cat_c=False, progress=False)
 
       out['F'] = [loss_train, 1-ret.p]
 
@@ -443,7 +457,7 @@ def train(config, run=None):
     print(f"Y_predict: {Y_predict.shape}")
       
     # Run conditional permutation test
-    ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
+    ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=False, progress=True)
     print(f"MAE_age_train: {MAE_age_train_best}")
     print(f"MAE_age_valid: {MAE_age_valid_best}")
     print(f"MAE_age_test:  {MAE_age_test_best}")
@@ -519,7 +533,7 @@ def train(config, run=None):
 
       Y_predict = np.concatenate(Y_predict).squeeze()
 
-      ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=True, progress=True)
+      ret = partial_confound_test(Y_target, Y_predict, C, cat_y=False, cat_yhat=False, cat_c=False, progress=True)
       
       loss_valid = 0.0
       MAE_age_valid = 0.0
