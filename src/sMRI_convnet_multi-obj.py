@@ -5,13 +5,11 @@ import nibabel as nib
 import torch.optim as optim
 import torch.nn.functional as F
 from copy import deepcopy
+from tqdm import tqdm, trange
+from multiprocessing.pool import ThreadPool
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
 from torchinfo import summary
-from tqdm import tqdm, trange
-from scipy import stats
-from util.fMRIImageLoader import num2vect, CenterRandomShift, RandomMirror
-from multiprocessing.pool import ThreadPool
 from pymoo.optimize import minimize
 from pymoo.operators.mutation.pm import PM
 from pymoo.algorithms.moo.nsga2 import NSGA2
@@ -20,13 +18,13 @@ from pymoo.core.problem import StarmapParallelization
 from pymoo.util.display.multi import MultiObjectiveOutput
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.core.problem import ElementwiseProblem
-# from mlconfound.stats import partial_confound_test
 from mlconfound.stats import _r2_factory, _conditional_log_likelihood_factory, ResultsPartiallyConfounded, cpt
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
+from scipy import stats
 
-warnings.simplefilter('ignore', UserWarning)
-from sklearn.metrics.cluster import normalized_mutual_info_score
+from util.fMRIImageLoader import num2vect, CenterRandomShift, RandomMirror
+# from sklearn.metrics.cluster import normalized_mutual_info_score
 
 DATA_DIR   = os.getenv("DATA_DIR",   "data/IXI_4x4x4")
 DATA_SPLIT = os.getenv("DATA_SPLIT", "all")
@@ -36,23 +34,21 @@ def generate_wandb_name(config):
   test_sites = '_'.join(sorted(config['site_test']))
   return f"train_{train_sites}_test_{test_sites}"
 
-def mutual_info(x,y):
-  mi = normalized_mutual_info_score(y,x)
+def pointbiserial(x,y):
   # print(f"x {x}")
   # print(f"y {y}")
-  # print(f"mi {mi}")
-  return mi
+  correlation, _ = stats.pointbiserialr(x, y)
+  return correlation
 
 def partial_confound_test(y, yhat, c, num_perms=1000,
                           cat_y=False, cat_yhat=False, cat_c=False,
                           mcmc_steps=50, cond_dist_method="gam",
                           return_null_dist=False, random_state=None, progress=True, n_jobs=-1):
 
-    r2_c_yhat = mutual_info
-    # r2_c_y = normalized_mutual_info_score
-    # r2_yhat_y = normalized_mutual_info_score
+    r2_c_yhat = pointbiserial
     # r2_c_yhat = _r2_factory(cat_c, cat_yhat)
-    r2_c_y = _r2_factory(cat_c, cat_y)
+    r2_c_y = pointbiserial
+    # r2_c_y = _r2_factory(cat_c, cat_y)
     r2_yhat_y = _r2_factory(cat_yhat, cat_y)
 
     condlike_f = _conditional_log_likelihood_factory(cat_c, cat_y, cond_dist_method)
