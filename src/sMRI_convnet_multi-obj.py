@@ -1,16 +1,17 @@
-import os, math, wandb, argparse, requests, torch, warnings
+import os, math, wandb, argparse, requests, torch
 import numpy as np
 import pandas as pd
 import nibabel as nib
 import torch.optim as optim
 import torch.nn.functional as F
+
 from scipy import stats
 from copy import deepcopy
 from tqdm import tqdm, trange
-from multiprocessing.pool import ThreadPool
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
 from torchinfo import summary
+from multiprocessing.pool import ThreadPool
 from pymoo.optimize import minimize
 from pymoo.operators.mutation.pm import PM
 from pymoo.algorithms.moo.nsga2 import NSGA2
@@ -34,29 +35,23 @@ def generate_wandb_name(config):
 
 def pointbiserial(x,y):
   correlation, _ = stats.pointbiserialr(x, y)
-  return correlation
+  return abs(correlation)
 
 def partial_confound_test(y, yhat, c, num_perms=1000,
                           cat_y=False, cat_yhat=False, cat_c=False,
                           mcmc_steps=50, cond_dist_method="gam",
                           return_null_dist=False, random_state=None, progress=True, n_jobs=-1):
 
-    # use point-biserial correlation as metriC
-    r2_c_yhat = pointbiserial
-    r2_c_y = pointbiserial
+  # use point-biserial correlation as metriC
+  r2_c_yhat = pointbiserial
+  r2_c_y = pointbiserial
+  r2_yhat_y = _r2_factory(cat_yhat, cat_y) # this one doesn't really matter since it doesn't go into p-value calculation
 
-    # Use the original pearson correlation as metric
-    # r2_c_yhat = _r2_factory(cat_c, cat_yhat)
-    # r2_c_y = _r2_factory(cat_c, cat_y)
+  condlike_f = _conditional_log_likelihood_factory(cat_c, cat_y, cond_dist_method)
 
-    r2_yhat_y = _r2_factory(cat_yhat, cat_y) # this one doesn't really matter since it doesn't go into p-value calculation
-
-    condlike_f = _conditional_log_likelihood_factory(cat_c, cat_y, cond_dist_method)
-
-    return ResultsPartiallyConfounded(
-        *cpt(x=c, y=yhat, z=y, num_perms=num_perms, t_xy=r2_c_yhat, t_xz=r2_c_y, t_yz=r2_yhat_y, condlike_f=condlike_f,
-             mcmc_steps=mcmc_steps, return_null_dist=return_null_dist, random_state=random_state,
-             progress=progress, n_jobs=n_jobs))
+  return ResultsPartiallyConfounded(
+    *cpt(x=c, y=yhat, z=y, num_perms=num_perms, t_xy=r2_c_yhat, t_xz=r2_c_y, t_yz=r2_yhat_y, condlike_f=condlike_f,
+         mcmc_steps=mcmc_steps, return_null_dist=return_null_dist, random_state=random_state, progress=progress, n_jobs=n_jobs))
 
 def create_confounded_sample(df, n_samples):
   # Convert site to numeric (0 for Guy's, 1 for Hammersmith's)

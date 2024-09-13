@@ -6,9 +6,9 @@ from mlconfound.stats import partial_confound_test
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
-
 from util.sEMGhelpers import load_features, partition_features_pair
 
+# lopo stands for - leave-one-pair out
 WANDB = os.getenv("WANDB", False)
 NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
 GROUP = os.getenv("GROUP", "SVM-sEMG-Leave-One-Pair-Out")
