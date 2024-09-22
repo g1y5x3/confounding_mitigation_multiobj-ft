@@ -176,6 +176,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   accuracy_test_best = 0
   model_best = None
   for epoch in tqdm(range(config.epochs), desc="Training"):
+    print("begin")
     loss_train = 0
     correct_train = 0
     model.train()
@@ -192,8 +193,9 @@ def train(config, signals, labels, sub_id, sub_skinfold):
 
       correct_train += count_correct(outputs, targets)
       loss_train += loss.item()
-
-    wandb.log({"loss/train": loss_train/len(dataset_train), "accuracy/train": correct_train/len(dataset_train)}, step=epoch)
+    print(epoch)
+    wandb.log({"loss/train": loss_train/len(dataset_train), 
+               "accuracy/train": correct_train/len(dataset_train)}, step=epoch)
 
     loss_valid = 0
     correct_valid = 0
@@ -205,19 +207,24 @@ def train(config, signals, labels, sub_id, sub_skinfold):
       correct_valid += count_correct(outputs, targets)
       loss_valid += loss.item()
 
-    wandb.log({"loss/valid": loss_valid/len(dataset_valid), "accuracy/valid": correct_valid/len(dataset_valid)}, step=epoch)
+    print(epoch)
+    wandb.log({"loss/valid": loss_valid/len(dataset_valid), 
+               "accuracy/valid": correct_valid/len(dataset_valid)}, step=epoch)
+
+    correct_test = 0
+    for inputs, targets in dataloader_test:
+      inputs, targets = inputs.to("cuda"), targets.to("cuda")
+      outputs = model(inputs)
+      correct_test += count_correct(outputs, targets)
+
+    print(epoch)
+    wandb.log({"accuracy/test": correct_test/len(dataset_test)}, step=epoch)
 
     if correct_valid/len(dataset_valid) > accuracy_valid_best:
+      model_best = copy.deepcopy(model)
       accuracy_train_best = correct_train/len(dataset_train)
       accuracy_valid_best = correct_valid/len(dataset_valid)
-      model_best = copy.deepcopy(model)
-      correct_test = 0
-      for inputs, targets in dataloader_test:
-        inputs, targets = inputs.to("cuda"), targets.to("cuda")
-        outputs = model(inputs)
-        correct_test += count_correct(outputs, targets)
-      accuracy_test_best = correct_test/len(dataset_test)
-      wandb.log({"accuracy/test": correct_test/len(dataset_test)}, step=epoch)
+      accuracy_test_best  = correct_test/len(dataset_test)
 
     scheduler.step()
 
@@ -236,10 +243,10 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   print(f"accuracy_valid_best: {accuracy_valid_best}")
   print(f"accuracy_test_best:  {accuracy_test_best}")
 
-  wandb.log({"result/p-value": ret.p,
-             "result/training": accuracy_train_best,
-             "result/validation": accuracy_valid_best,
-             "result/testing": accuracy_test_best})
+  wandb.run.summary["result/training"] = accuracy_train_best
+  wandb.run.summary["result/validation"] = accuracy_valid_best
+  wandb.run.summary["result/testing"] = accuracy_test_best
+  wandb.run.summary["result/p-value"] = ret.p
 
   with torch.no_grad():
     print('Genetic Algorithm Optimization...')
@@ -319,10 +326,10 @@ def train(config, signals, labels, sub_id, sub_skinfold):
         accuracy_valid_best_cpt = correct_valid/len(dataset_valid)
         p_value_best_cpt = ret.p
 
-  wandb.log({"result/p-value-cpt": p_value_best_cpt,
-             "result/training-cpt": accuracy_train_best_cpt,
-             "result/validation-cpt": accuracy_valid_best_cpt,
-             "result/testing-cpt": accuracy_test_best_cpt})
+  wandb.run.summary["result/training-cpt"]   = accuracy_train_best_cpt
+  wandb.run.summary["result/validation-cpt"] = accuracy_valid_best_cpt
+  wandb.run.summary["result/testing-cpt"] = accuracy_test_best_cpt
+  wandb.run.summary["result/p-value-cpt"] = p_value_best_cpt
 
 
 if __name__ == "__main__":
