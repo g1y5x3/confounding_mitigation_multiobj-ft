@@ -243,7 +243,7 @@ def train(config, signals, labels, sub_id, sub_skinfold):
   print(f"accuracy_valid_best: {accuracy_valid_best}")
   print(f"accuracy_test_best:  {accuracy_test_best}")
 
-  wandb.run.summary["result/training"] = accuracy_train_best
+  wandb.run.summary["result/training"]   = accuracy_train_best
   wandb.run.summary["result/validation"] = accuracy_valid_best
   wandb.run.summary["result/testing"] = accuracy_test_best
   wandb.run.summary["result/p-value"] = ret.p
