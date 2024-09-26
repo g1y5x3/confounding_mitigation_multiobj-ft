@@ -17,7 +17,7 @@ which makes it harder to read and understand. There are essentially 3 steps for 
       return np.array([norm.logpdf(X, loc=m, scale=sigma) for m in mu]).T
     ```
     GAM model is used to estimate
-    $$ c = \alpha + \beta f(y) + e $$
+    $$c = \alpha + \beta f(y) + e$$
     where the feature function $f$ is built using penalized B-splines. If we write $\mu=\alpha+\beta f(y)$ and $\sigma$ denotes the standard deviation of the residual $e$
 
 2. sample permutations of $c^{(i)}$ using Markov Chain Monte Carlo sampler (**the slowest part of the algorithm**)
@@ -42,9 +42,7 @@ which makes it harder to read and understand. There are essentially 3 steps for 
     ```
     It draws disjoint pairs in parallel and decides whether or not to swap them randomly, according to the odds ratio calculated from the conditional
     densities belonging to the original and swapped data.
-    $$
-    ln\frac{q(c_j|y_i)q(c_i|y_j)}{q(c_i|y_i)q(c_j|y_j)} = \ell(c_j|y_i)+\ell(c_i|y_j)-\ell(c_i|y_i)-\ell(c_j|y_j)
-    $$
+    $$ln\frac{q(c_j|y_i)q(c_i|y_j)}{q(c_i|y_i)q(c_j|y_j)} = \ell(c_j|y_i)+\ell(c_i|y_j)-\ell(c_i|y_i)-\ell(c_j|y_j)$$
     where $\ell$ denotes the log-likelihood from 1.
 
 3. calculate p-value
@@ -56,6 +54,4 @@ which makes it harder to read and understand. There are essentially 3 steps for 
       t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1]
     p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
     ```
-    $$
-    p = \frac{\sum^m_{i=1}{1\{T(c^{(i)}, \hat{y}, y) \geq T(c, \hat{y}, y)\}}}{m}
-    $$
+    $$p = \frac{\sum^m_{i=1}{1\{T(c^{(i)}, \hat{y}, y) \geq T(c, \hat{y}, y)\}}}{m}$$
