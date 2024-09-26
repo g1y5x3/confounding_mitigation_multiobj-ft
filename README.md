@@ -1,19 +1,8 @@
-# Confounding Mitigation in Deep Learning
-## TO-DO
-- [] fix CPT algorithm for the loss function
-  - currently it uses the batch to estimate the initial density function which is not working. In order to fix it, the density has to be estimated
-  from the whole set. However, to do so, all the indices of samples during training w.r.t the original dataloader needs to be tracked in order to
-  retrieve the correct log-likelihood value which is very messy.
-  - distance correlation is slow to compute when the size for calculating pair-wise distances get too large.
-- [] GA-SVM for fMRI data (basically copy the workflow from [sEMG_GA-SVM.py](src/sEMG_GA-SVM.py) script to [train.py](src/train.py) which uses CNN to
-predict subject ages with fMRI)
-- [] Implement MLP for fMRI data, will be extremely similar workflow to [train.py](src/train.py)
-- [] Maybe use the voice acoustic dataset for depression prediction as the third dataset since the GA-SVM workflow already exists. But need to make
-sure all the previous are completed.
+# Confounding Mitigation in Machine Learning
 
-## Implementation details for emmbedding CPT into the Loss function
-The original library contains a bunch of functions for utility which makes it harder to read and understand. There are essentially 3 steps for the CPT
-algorithm to compute the p-value:
+## Implementation details for CPT
+The experiments use the library [mlconfound](https://github.com/pni-lab/mlconfound). However, the original library contains a bunch of functions for utility 
+which makes it harder to read and understand. There are essentially 3 steps for the CPT algorithm to compute the p-value:
 
 1. estimate the probably density $q(c|y)$
 
@@ -60,31 +49,13 @@ algorithm to compute the p-value:
 
 3. calculate p-value
     ```python
-    def cpt_p_dcor(c, yhat, y, mcmc_steps=50, random_state=123, num_perm=1000):
-      # sampling permutations of c
-      bs = y.shape[0]
-      cond_log_like_mat = conditional_log_likelihood(X=c.numpy(), C=y.numpy(), xdtype='categorical')
-      Pi_init = generate_X_CPT_MC(mcmc_steps*5, cond_log_like_mat, np.arange(bs, dtype=int), random_state)
-
-      def workhorse(c, _random_state):
-        # batched os job_batch for efficient parallelization
-        Pi = generate_X_CPT_MC(mcmc_steps, cond_log_like_mat, Pi_init, random_state=_random_state)
-        return c[Pi]
-      rng = np.random.default_rng(random_state)
-      random_states = rng.integers(np.iinfo(np.int32).max, size=num_perm)
-      c_pi = torch.tensor(np.array(Parallel(n_jobs=-1)(delayed(workhorse)(c, i) for i in random_states)), dtype=torch.float32)
-      # compute p-value
-      t_yhat_c = distance_correlation(yhat.reshape([bs, -1]), c.reshape([bs, -1])).repeat(num_perm)
-      t_yhat_cpi = torch.zeros(num_perm)
-      for i in range(num_perm):
-        t_yhat_cpi[i] = distance_correlation(yhat.reshape([bs, -1]), c_pi[i,:].reshape([bs, -1]))
-
-      return torch.sigmoid(t_yhat_cpi - t_yhat_c).mean()
+    t_x_y   = np.corrcoef(x, y)[0,1]
+    t_xpi_y = np.zeros(num_perm)
+    y_tile  = np.tile(y, (num_perm,1))
+    for i in range(num_perm):
+      t_xpi_y[i] = np.corrcoef(x_perm[i,:], y_tile[i,:])[0,1]
+    p = np.sum(t_xpi_y >= t_x_y) / len(t_xpi_y)
     ```
     $$
     p = \frac{\sum^m_{i=1}{1\{T(c^{(i)}, \hat{y}, y) \geq T(c, \hat{y}, y)\}}}{m}
     $$
-    There are a few prerequisits here in order to be able to apply this metric into the loss function.
-    1. function $T$ needs to be non-parametric and diffientable - distance correlation (correlation of pairwise distances within the two variables)
-    2. $\geq$ is essentially a step function which is not diffientable, so it is replaced with a **sigmoid** function of
-    $T(c^{(i)}, \hat{y}, y) - T(c, \hat{y}, y)$.
