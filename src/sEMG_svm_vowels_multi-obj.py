@@ -16,7 +16,7 @@ from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.util.display.multi import MultiObjectiveOutput
 
-from util.sEMGhelpers import load_datafile, LoadTrainTestFeatures
+from util.sEMGhelpers import load_features, partition_features_pair
 
 WANDB = os.getenv("WANDB", False)
 NAME  = os.getenv("NAME",  "Confounding-Mitigation-In-Deep-Learning")
@@ -99,7 +99,7 @@ if __name__ == "__main__":
   # X - FEAT_N
   # Y - LABEL
   # C - SUBJECT_SKINFOLD
-  FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_datafile("data/subjects_40_v6")
+  FEAT_N, LABEL, SUBJECT_SKINFOLD, VFI_1, SUBJECT_ID = load_features("data/subjects_40_v6")
 
   testing_acc  = np.zeros(40)
   training_acc = np.zeros(40)
@@ -129,7 +129,7 @@ if __name__ == "__main__":
                         reinit   = True)
       wandb.log({"subject_info/vfi_1"  : int(VFI_1[sub_test][0][0])})
 
-    X, Y, C, X_Test, Y_Test = LoadTrainTestFeatures(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
+    X, Y, C, X_Test, Y_Test = partition_features_pair(FEAT_N, LABEL, SUBJECT_SKINFOLD, sub_test)
 
     # Split training and validation (mainly for shuffle validation set technicially ot used here)
     X_Train, X_Valid, YC_Train, YC_Valid = train_test_split(X, np.transpose([Y, C]),
@@ -224,6 +224,7 @@ if __name__ == "__main__":
 
       # Detect if the current chromosome gives the best predictio`n
       if temp_te_acc > acc_best:
+        w_best = w
         acc_best = temp_te_acc
 
         training_acc_ga[sub_test] = temp_tr_acc
@@ -237,5 +238,6 @@ if __name__ == "__main__":
     if WANDB:
       wandb.log({"metrics/train_acc_cpt" : training_acc_ga[sub_test],
                  "metrics/test_acc_cpt"  : testing_acc_ga[sub_test],
-                 "metrics/p_value_cpt"   : p_value_ga[sub_test]})
+                 "metrics/p_value_cpt"   : p_value_ga[sub_test],
+                 "weights/best_weights"  : w_best.tolist()})
       run.finish()
